@@ -86,6 +86,12 @@ void pvec_free(PVec *vec) {
   free(vec->start);
 }
 
+void pvec_print(PVec *vec, char *line) {
+  for (size_t i = 0; i < vec->size; i++) {
+    printf(line, vec->start[i]);
+  }
+}
+
 // test if c represents the end of a line
 int end_of_line_p(char c, enum ACTION *type) {
   if (c == '\n' || c == ';' || c == '\0') {
@@ -154,20 +160,24 @@ char *resolve_path(char *cmd, PVec *path) {
   return NULL;
 }
 
-void exec_external(PVec *cmd, PVec *path) {
+void exec_external(PVec *cmd, PVec *path, enum ACTION *signal) {
   char *absolute_path = resolve_path(cmd->start[0], path);
   if (absolute_path != NULL) {
+    free(cmd->start[0]);
+    cmd->start[0] = absolute_path;
     pid_t pd = fork();
     if (pd == 0) {
       pvec_push(cmd, NULL);
-      execv(absolute_path, (char **)cmd->start + 1);
+      execv(absolute_path, (char **)cmd->start);
     } else if (pd > 0) {
-      wait(&pd);
+      if (*signal != ASYNC) {
+        int status;
+        waitpid(pd, &status, 0);
+      }
     } else {
       // pd < 0
       signal_error(1);
     }
-    free(absolute_path);
   } else {
     printf("Could not find command: %s\n", cmd->start[0]);
   }
@@ -175,7 +185,6 @@ void exec_external(PVec *cmd, PVec *path) {
 }
 
 void exec_command(PVec *cmd, PVec *path, enum ACTION *action) {
-  *action = NONE;
   if (!cmd->size || *action == EXIT) {
     return;
   }
@@ -183,7 +192,6 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action) {
   if (!strcmp(first, CD_COMMAND)) {
     signal_error(cmd->size != 2);
     chdir(cmd->start[1]);
-    free(cmd->start[1]);
   } else if (!strcmp(first, EXIT_COMMAND)) {
     signal_error(cmd->size != 1);
     *action = EXIT;
@@ -200,9 +208,9 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action) {
       pvec_push(path, cmd->start[index]);
     }
   } else {
-    exec_external(cmd, path);
+    exec_external(cmd, path, action);
   }
-  free(first);
+  pvec_free(cmd);
 }
 
 void main_loop() {
@@ -218,6 +226,7 @@ void main_loop() {
   ssize_t nread;
   enum ACTION action = NONE;
   while (action != EXIT) {
+    action = NONE;
     printf("%s", DEFAULT_PROMPT);
     nread = getline(&line, &len, stdin);
     if (nread < 0) {
@@ -228,9 +237,12 @@ void main_loop() {
     int read_to = 0;
     while (line_end != read_to && action != EXIT) {
       PVec command = seperate_line(line, &read_to, &action);
+      // printf("action state %d\n", action);
       exec_command(&command, &path, &action);
     }
   }
+  free(line);
+  pvec_free(&path);
 }
 
 int main(int argc, char **argv) {
@@ -240,7 +252,7 @@ int main(int argc, char **argv) {
     printf("TODO: read in batch file");
     exit(2);
   } else {
-    printf("Bad arguments");
+    printf("usage: wish [file]\n");
     exit(1);
   }
 }
