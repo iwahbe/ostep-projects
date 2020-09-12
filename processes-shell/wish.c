@@ -32,6 +32,8 @@ const char *EXIT_COMMAND = "exit";
 
 const char ERROR_MESSAGE[30] = "An error has occurred\n";
 
+enum ACTION { EXIT, NONE, PIPE, ASYNC };
+
 void signal_error(int throw) {
   if (throw) {
     fwrite(ERROR_MESSAGE, sizeof(char), sizeof(ERROR_MESSAGE), stderr);
@@ -85,21 +87,36 @@ void pvec_free(PVec *vec) {
 }
 
 // test if c represents the end of a line
-int end_of_line_p(char c) { return c == '\n' || c == ';' || c == '\0'; }
+int end_of_line_p(char c, enum ACTION *type) {
+  if (c == '\n' || c == ';' || c == '\0') {
+    *type = NONE;
+    return 1;
+  } else if (c == EOF) {
+    *type = EXIT;
+    return 1;
+  } else if (c == '|') {
+    *type = PIPE;
+    return 1;
+  } else if (c == '&') {
+    *type = ASYNC;
+    return 1;
+  } else {
+    return 0;
+  }
+}
 
 // test if c represents an argument seperator
 int arg_seperator_p(char c) { return c == ' ' || c == '\t'; }
 
 // Returns a PVec of the arguments
-PVec seperate_line(char *line, int *end) {
-  *end = 0;
+PVec seperate_line(char *line, int *end, enum ACTION *signal) {
   if (line == NULL) {
     return pvec_make();
   }
   PVec vec = pvec_make();
-  while (!end_of_line_p(line[(*end)])) {
+  while (!end_of_line_p(line[(*end)], signal)) {
     int word_start = *end;
-    while (!arg_seperator_p(line[*end]) && !end_of_line_p(line[*end])) {
+    while (!arg_seperator_p(line[*end]) && !end_of_line_p(line[*end], signal)) {
       (*end)++;
     }
     int word_length = *end - word_start;
@@ -157,20 +174,19 @@ void exec_external(PVec *cmd, PVec *path) {
   return;
 }
 
-enum ACTION { EXIT, NONE, PIPE, ASYNC };
-
-enum ACTION exec_command(PVec *cmd, PVec *path) {
-  if (!cmd->size)
-    return NONE;
+void exec_command(PVec *cmd, PVec *path, enum ACTION *action) {
+  *action = NONE;
+  if (!cmd->size || *action == EXIT) {
+    return;
+  }
   char *first = cmd->start[0];
-  enum ACTION ret = NONE;
   if (!strcmp(first, CD_COMMAND)) {
     signal_error(cmd->size != 2);
     chdir(cmd->start[1]);
     free(cmd->start[1]);
   } else if (!strcmp(first, EXIT_COMMAND)) {
     signal_error(cmd->size != 1);
-    ret = EXIT;
+    *action = EXIT;
   } else if (!strcmp(first, PATH_COMMAND)) {
     size_t index = 1;
     // if the first command is "-+", then don't remove the old path
@@ -182,14 +198,11 @@ enum ACTION exec_command(PVec *cmd, PVec *path) {
     }
     for (; index < cmd->size; index++) {
       pvec_push(path, cmd->start[index]);
-      printf("'%s' ", cmd->start[index]);
     }
-    printf("\n");
   } else {
     exec_external(cmd, path);
   }
   free(first);
-  return ret;
 }
 
 void main_loop() {
@@ -203,27 +216,19 @@ void main_loop() {
   char *line = NULL;
   size_t len = 0;
   ssize_t nread;
-
-  while (1) {
+  enum ACTION action = NONE;
+  while (action != EXIT) {
     printf("%s", DEFAULT_PROMPT);
     nread = getline(&line, &len, stdin);
+    if (nread < 0) {
+      printf("\n");
+      return;
+    }
     int line_end = strlen(line);
     int read_to = 0;
-    while (line_end != read_to) {
-      PVec command = seperate_line(line, &read_to);
-      switch (exec_command(&command, &path)) {
-      case EXIT:
-        return;
-        break;
-      case NONE:
-        break;
-      case PIPE:
-        printf("TODO: pipe not yet implemented.");
-        break;
-      case ASYNC:
-        printf("TODO: async not yet implemented.");
-        break;
-      }
+    while (line_end != read_to && action != EXIT) {
+      PVec command = seperate_line(line, &read_to, &action);
+      exec_command(&command, &path, &action);
     }
   }
 }
