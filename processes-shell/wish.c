@@ -140,13 +140,12 @@ char *resolve_path(char *cmd, PVec *path) {
 void exec_external(PVec *cmd, PVec *path) {
   char *absolute_path = resolve_path(cmd->start[0], path);
   if (absolute_path != NULL) {
-    printf("Calling external command: %s\n", absolute_path);
     pid_t pd = fork();
     if (pd == 0) {
-      execv(absolute_path, cmd->size > 1 ? (char **)cmd->size + 1 : NULL);
+      pvec_push(cmd, NULL);
+      execv(absolute_path, (char **)cmd->start + 1);
     } else if (pd > 0) {
-      int status;
-      waitpid(pd, &status, 1);
+      wait(&pd);
     } else {
       // pd < 0
       signal_error(1);
@@ -161,6 +160,8 @@ void exec_external(PVec *cmd, PVec *path) {
 enum ACTION { EXIT, NONE, PIPE, ASYNC };
 
 enum ACTION exec_command(PVec *cmd, PVec *path) {
+  if (!cmd->size)
+    return NONE;
   char *first = cmd->start[0];
   enum ACTION ret = NONE;
   if (!strcmp(first, CD_COMMAND)) {
