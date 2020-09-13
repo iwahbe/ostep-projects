@@ -12,6 +12,7 @@
  * */
 
 #include <assert.h>
+#include <readline/readline.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -303,17 +304,23 @@ void main_loop(FILE *input, int batch) {
 
   while (action != EXIT) {
     action = NONE;
-    if (!batch)
-      printf("%s", DEFAULT_PROMPT);
-    nread = getline(&line, &len, input);
+    if (!batch) {
+      line = readline(DEFAULT_PROMPT);
+      if (line == NULL)
+        nread = -1;
+    } else {
+      nread = getline(&line, &len, input);
+    }
     if (nread < 0) {
       if (!batch)
         printf("\n");
       action = EXIT;
     }
     int line_end = strlen(line);
+    if (line_end > 0)
+      add_history(line);
     int read_to = 0;
-    while (line_end != read_to && action != EXIT) {
+    while (line_end > read_to && action != EXIT) {
       PVec command = seperate_line(line, &read_to, &action);
       exec_command(&command, &path, &action, &processes);
     }
@@ -321,8 +328,11 @@ void main_loop(FILE *input, int batch) {
       int status;
       waitpid((int)(long)pvec_pop(&processes), &status, 0);
     }
+    if (!batch) // for the readline library
+      free(line);
   }
-  free(line);
+  if (batch) // for no readline library
+    free(line);
   pvec_free(&path);
 }
 

@@ -264,7 +264,7 @@ the knowledge you can always go back to an older, working version if need be.
 
 Extra challenges
 
-1. [ ] Use readline instead of getline.
+1. [x] Use readline instead of getline.
 2. [ ] Get the initial path from the \$PATH variable.
 3. [ ] Input redirection, supporting the `<` operator.
 4. [ ] Support the `|` (Pipe) operator.

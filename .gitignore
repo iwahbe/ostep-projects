@@ -7,3 +7,4 @@ tmp/
 tests-out/
 readline-8.0/
 *.gz
+*.o
