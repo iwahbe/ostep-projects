@@ -123,6 +123,7 @@ PVec seperate_line(char *line, int *end, enum ACTION *signal) {
   if (line == NULL) {
     return pvec_make();
   }
+  *signal = NONE;
   PVec vec = pvec_make();
   int word_start;
   while (!end_of_line_p(line[(*end)], signal)) {
@@ -195,7 +196,8 @@ int handle_redirect(PVec *cmd, char **file) {
   return 0;
 }
 
-void exec_external(PVec *cmd, PVec *path, enum ACTION *signal) {
+void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
+                   PVec *processes) {
   char *absolute_path = resolve_path(cmd->start[0], path);
   free(cmd->start[0]);
   cmd->start[0] = absolute_path;
@@ -216,6 +218,7 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal) {
       execv(absolute_path, (char **)cmd->start);
     } else if (pd > 0) {
       int status;
+      pvec_push(processes, (void *)(long)pd);
       waitpid(pd, &status, *signal == ASYNC);
       // TODO: report status when variables are implemented
     } else {
@@ -230,8 +233,9 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal) {
 // `cmd` is a the parsed command instruction. Calling exec_command gives
 // ownership of `cmd` to the callee. `path` is the exec-path for the shell. It
 // can be mutated but will end valid. `action` represents the current action
-// state, and can be mutated.
-void exec_command(PVec *cmd, PVec *path, enum ACTION *action) {
+// state, and can be mutated. `processes` is a list of processes left running,
+// and contains not pointers but integers.
+void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
   if (!cmd->size || *action == EXIT) {
     return;
   }
@@ -257,7 +261,7 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action) {
       pvec_push(path, cmd->start[index]);
     }
   } else {
-    exec_external(cmd, path, action);
+    exec_external(cmd, path, action, processes);
     pvec_free(cmd);
   }
 }
@@ -279,6 +283,10 @@ void main_loop(FILE *input, int batch) {
   size_t len = 0;
   ssize_t nread;
   enum ACTION action = NONE;
+
+  // running procces
+  PVec processes = pvec_make();
+
   while (action != EXIT) {
     action = NONE;
     if (!batch)
@@ -293,7 +301,11 @@ void main_loop(FILE *input, int batch) {
     int read_to = 0;
     while (line_end != read_to && action != EXIT) {
       PVec command = seperate_line(line, &read_to, &action);
-      exec_command(&command, &path, &action);
+      exec_command(&command, &path, &action, &processes);
+    }
+    while (processes.size > 0) {
+      int status;
+      waitpid((int)(long)pvec_pop(&processes), &status, 0);
     }
   }
   free(line);
