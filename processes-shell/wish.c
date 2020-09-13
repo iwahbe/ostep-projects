@@ -33,13 +33,13 @@ const char *EXIT_COMMAND = "exit";
 
 const char ERROR_MESSAGE[30] = "An error has occurred\n";
 
-enum ACTION { EXIT, NONE, PIPE, ASYNC };
+enum ACTION { EXIT, NONE, PIPE, ASYNC, REDIRECT };
 
 void signal_error(int throw, int hard) {
   if (throw) {
     write(STDERR_FILENO, ERROR_MESSAGE, strlen(ERROR_MESSAGE));
     if (hard) {
-      // exit(1);
+      exit(1);
     }
   }
 }
@@ -113,24 +113,35 @@ int end_of_line_p(char c, enum ACTION *type) {
   }
 }
 
+int special_char_p(char c) { return c == '>'; }
+
 // test if c represents an argument seperator
 int arg_seperator_p(char c) { return c == ' ' || c == '\t'; }
 
 // Returns a PVec of the arguments
-PVec seperate_line(char *line, int *end, enum ACTION *signal, int batch) {
+PVec seperate_line(char *line, int *end, enum ACTION *signal) {
   if (line == NULL) {
     return pvec_make();
   }
   PVec vec = pvec_make();
+  int word_start;
   while (!end_of_line_p(line[(*end)], signal)) {
-    int word_start = *end;
-    while (!arg_seperator_p(line[*end]) && !end_of_line_p(line[*end], signal)) {
+    if (special_char_p(line[*end])) {
       (*end)++;
+      word_start = *end - 1;
+    } else {
+      word_start = *end;
+      while (!arg_seperator_p(line[*end]) &&
+             !end_of_line_p(line[*end], signal) &&
+             !special_char_p(line[*end])) {
+        (*end)++;
+      }
     }
+
     int word_length = *end - word_start;
     if (word_length > 0) {
       char *str = (char *)malloc(sizeof(char) * (word_length + 1));
-      signal_error(str == NULL, batch);
+      signal_error(str == NULL, 0);
       memcpy(str, line + word_start, word_length);
       str[word_length] = '\0';
       pvec_push(&vec, str);
@@ -162,17 +173,46 @@ char *resolve_path(char *cmd, PVec *path) {
   return NULL;
 }
 
-void exec_external(PVec *cmd, PVec *path, enum ACTION *signal, int batch) {
+// Takes a command `cmd`, a pointer to a string `file`.
+//
+// Return:
+// < 0 => an error occured.
+// = 0 => no redirect detected.
+// > 0 => redirect detected cmd and file modified.
+int handle_redirect(PVec *cmd, char **file) {
+  size_t index = 0;
+  for (; index < cmd->size; index++) {
+    if (!strcmp(cmd->start[index], ">")) {
+      if (index + 2 == cmd->size) {
+        *file = (char *)pvec_pop(cmd);
+        free(pvec_pop(cmd));
+        return 1;
+      } else {
+        return -1;
+      }
+    }
+  }
+  return 0;
+}
+
+void exec_external(PVec *cmd, PVec *path, enum ACTION *signal) {
   char *absolute_path = resolve_path(cmd->start[0], path);
+  free(cmd->start[0]);
+  cmd->start[0] = absolute_path;
   if (absolute_path != NULL) {
-    free(cmd->start[0]);
-    cmd->start[0] = absolute_path;
     pid_t pd = fork();
     if (pd == 0) {
-      pvec_push(cmd, NULL);
-      if (*signal == PIPE) {
+      char *pipe_to;
+      int handle_res = handle_redirect(cmd, &pipe_to);
+      if (handle_res > 0) {
         fclose(stdout);
+        fopen(pipe_to, "w");
+      } else if (handle_res < 0) {
+        signal_error(1, 0);
+        return;
+      } else if (*signal == PIPE) {
       }
+      pvec_push(cmd, NULL);
       execv(absolute_path, (char **)cmd->start);
     } else if (pd > 0) {
       int status;
@@ -180,29 +220,28 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal, int batch) {
       // TODO: report status when variables are implemented
     } else {
       // pd < 0
-      signal_error(1, batch);
+      signal_error(1, 0);
     }
   } else {
-    signal_error(1, batch);
+    signal_error(1, 0);
   }
-  return;
 }
 
 // `cmd` is a the parsed command instruction. Calling exec_command gives
 // ownership of `cmd` to the callee. `path` is the exec-path for the shell. It
 // can be mutated but will end valid. `action` represents the current action
-// state, and can be mutated. `batch` indicates wither to execute in batch mode.
-void exec_command(PVec *cmd, PVec *path, enum ACTION *action, int batch) {
+// state, and can be mutated.
+void exec_command(PVec *cmd, PVec *path, enum ACTION *action) {
   if (!cmd->size || *action == EXIT) {
     return;
   }
   char *first = cmd->start[0];
   if (!strcmp(first, CD_COMMAND)) {
-    signal_error(cmd->size != 2, batch);
+    signal_error(cmd->size != 2, 0);
     chdir(cmd->start[1]);
     pvec_free(cmd);
   } else if (!strcmp(first, EXIT_COMMAND)) {
-    signal_error(cmd->size != 1, batch);
+    signal_error(cmd->size != 1, 0);
     *action = EXIT;
     pvec_free(cmd);
   } else if (!strcmp(first, PATH_COMMAND)) {
@@ -218,7 +257,7 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action, int batch) {
       pvec_push(path, cmd->start[index]);
     }
   } else {
-    exec_external(cmd, path, action, batch);
+    exec_external(cmd, path, action);
     pvec_free(cmd);
   }
 }
@@ -253,8 +292,8 @@ void main_loop(FILE *input, int batch) {
     int line_end = strlen(line);
     int read_to = 0;
     while (line_end != read_to && action != EXIT) {
-      PVec command = seperate_line(line, &read_to, &action, batch);
-      exec_command(&command, &path, &action, batch);
+      PVec command = seperate_line(line, &read_to, &action);
+      exec_command(&command, &path, &action);
     }
   }
   free(line);
@@ -267,13 +306,15 @@ int main(int argc, char **argv) {
   } else if (argc == 2) {
     FILE *file = fopen(argv[1], "r");
     if (file == NULL)
-      signal_error(file == NULL, 0);
+      signal_error(file == NULL, 1);
     else {
       main_loop(file, 1);
       fclose(file);
     }
   } else {
-    printf("usage: wish [file]\n");
-    exit(1);
+    if (0)
+      printf("usage: wish [file]\n");
+    else
+      signal_error(1, 1);
   }
 }
