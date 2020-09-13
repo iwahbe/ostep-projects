@@ -52,6 +52,7 @@ struct PVec {
 };
 typedef struct PVec PVec;
 
+// Creates a `PVec`.
 PVec pvec_make() {
   PVec out;
   out.size = 0;
@@ -60,6 +61,7 @@ PVec pvec_make() {
   return out;
 }
 
+// Pushes en element `el` onto a PVec `vec`
 void pvec_push(PVec *vec, void *el) {
   // we need to allocate more memory
   if (vec->alloc <= vec->size) {
@@ -74,6 +76,8 @@ void pvec_push(PVec *vec, void *el) {
   vec->start[vec->size++] = el;
 }
 
+// Pops an element of of `vec`.
+// Returns NULL if no element is found.
 void *pvec_pop(PVec *vec) {
   if (vec->size == 0) {
     return NULL;
@@ -82,19 +86,21 @@ void *pvec_pop(PVec *vec) {
   }
 }
 
+// Frees each element in `vec`, then frees the vector itself.
 void pvec_free(PVec *vec) {
   while (vec->size > 0)
     free(pvec_pop(vec));
   free(vec->start);
 }
 
+// Prints each element of `vec` with `line` used as the descriptor for `printf`.
 void pvec_print(PVec *vec, char *line) {
   for (size_t i = 0; i < vec->size; i++) {
     printf(line, vec->start[i]);
   }
 }
 
-// test if c represents the end of a line
+// Test if `c` represents the end of a line
 int end_of_line_p(char c, enum ACTION *type) {
   if (c == '\n' || c == ';' || c == '\0') {
     *type = NONE;
@@ -113,33 +119,37 @@ int end_of_line_p(char c, enum ACTION *type) {
   }
 }
 
+// Tests for special operators. A special operator works like a single charicter
+// word with respect to parsing.
 int special_char_p(char c) { return c == '>'; }
 
 // test if c represents an argument seperator
 int arg_seperator_p(char c) { return c == ' ' || c == '\t'; }
 
-// Returns a PVec of the arguments
-PVec seperate_line(char *line, int *end, enum ACTION *signal) {
+// Parses a line into a list of arguments. `line` is the line to be parsed, it
+// is not consumed. `index` is the location in line where parsing begins. It
+// will be updated the point to the last char parsed. `action` is the status of
+// each line. It is here to detect EOF.
+PVec seperate_line(char *line, int *index, enum ACTION *action) {
   if (line == NULL) {
     return pvec_make();
   }
-  *signal = NONE;
   PVec vec = pvec_make();
   int word_start;
-  while (!end_of_line_p(line[(*end)], signal)) {
-    if (special_char_p(line[*end])) {
-      (*end)++;
-      word_start = *end - 1;
+  while (!end_of_line_p(line[(*index)], action)) {
+    if (special_char_p(line[*index])) {
+      (*index)++;
+      word_start = *index - 1;
     } else {
-      word_start = *end;
-      while (!arg_seperator_p(line[*end]) &&
-             !end_of_line_p(line[*end], signal) &&
-             !special_char_p(line[*end])) {
-        (*end)++;
+      word_start = *index;
+      while (!arg_seperator_p(line[*index]) &&
+             !end_of_line_p(line[*index], action) &&
+             !special_char_p(line[*index])) {
+        (*index)++;
       }
     }
 
-    int word_length = *end - word_start;
+    int word_length = *index - word_start;
     if (word_length > 0) {
       char *str = (char *)malloc(sizeof(char) * (word_length + 1));
       signal_error(str == NULL, 0);
@@ -147,15 +157,17 @@ PVec seperate_line(char *line, int *end, enum ACTION *signal) {
       str[word_length] = '\0';
       pvec_push(&vec, str);
     }
-    if (arg_seperator_p(line[*end]))
-      (*end)++;
+    if (arg_seperator_p(line[*index]))
+      (*index)++;
   }
-  (*end)++;
+  (*index)++;
   return vec;
 }
 
-char *resolve_path(char *cmd, PVec *path) {
-  int cmd_len = strlen(cmd);
+// Resolves `command` to it's absolute path by iterating through `path`,
+// returing the first entry found. If no valid entry is found, returns `NULL`.
+char *resolve_path(char *command, PVec *path) {
+  int cmd_len = strlen(command);
   int hold_str_len = cmd_len;
   char *hold_str = malloc(sizeof(char) * hold_str_len);
   for (size_t i = 0; i < path->size; i++) {
@@ -166,7 +178,7 @@ char *resolve_path(char *cmd, PVec *path) {
     }
     strcpy(hold_str, path->start[i]);
     strcat(hold_str, "/");
-    strcat(hold_str, cmd);
+    strcat(hold_str, command);
     if (!access(hold_str, X_OK))
       return hold_str;
   }
@@ -196,6 +208,8 @@ int handle_redirect(PVec *cmd, char **file) {
   return 0;
 }
 
+// Exectues an non-builtin command. `cmd` is the parsed command to be executed.
+// `path`, `action`, and `processes` are treated the same as `exec_command`.
 void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
                    PVec *processes) {
   char *absolute_path = resolve_path(cmd->start[0], path);
@@ -234,7 +248,7 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
 // ownership of `cmd` to the callee. `path` is the exec-path for the shell. It
 // can be mutated but will end valid. `action` represents the current action
 // state, and can be mutated. `processes` is a list of processes left running,
-// and contains not pointers but integers.
+// and contains not pointers but integers. Processes can be added.
 void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
   if (!cmd->size || *action == EXIT) {
     return;
