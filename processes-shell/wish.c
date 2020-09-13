@@ -11,6 +11,7 @@
  *
  * */
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,10 +35,12 @@ const char ERROR_MESSAGE[30] = "An error has occurred\n";
 
 enum ACTION { EXIT, NONE, PIPE, ASYNC };
 
-void signal_error(int throw) {
+void signal_error(int throw, int hard) {
   if (throw) {
-    fwrite(ERROR_MESSAGE, sizeof(char), sizeof(ERROR_MESSAGE), stderr);
-    exit(1);
+    write(STDERR_FILENO, ERROR_MESSAGE, strlen(ERROR_MESSAGE));
+    if (hard) {
+      // exit(1);
+    }
   }
 }
 
@@ -66,7 +69,6 @@ void pvec_push(PVec *vec, void *el) {
     } else {
       vec->alloc = vec->alloc * 2;
       vec->start = realloc(vec->start, vec->alloc * sizeof(void *));
-      signal_error(vec->start == NULL);
     }
   }
   vec->start[vec->size++] = el;
@@ -115,7 +117,7 @@ int end_of_line_p(char c, enum ACTION *type) {
 int arg_seperator_p(char c) { return c == ' ' || c == '\t'; }
 
 // Returns a PVec of the arguments
-PVec seperate_line(char *line, int *end, enum ACTION *signal) {
+PVec seperate_line(char *line, int *end, enum ACTION *signal, int batch) {
   if (line == NULL) {
     return pvec_make();
   }
@@ -128,7 +130,7 @@ PVec seperate_line(char *line, int *end, enum ACTION *signal) {
     int word_length = *end - word_start;
     if (word_length > 0) {
       char *str = (char *)malloc(sizeof(char) * (word_length + 1));
-      signal_error(str == NULL);
+      signal_error(str == NULL, batch);
       memcpy(str, line + word_start, word_length);
       str[word_length] = '\0';
       pvec_push(&vec, str);
@@ -160,7 +162,7 @@ char *resolve_path(char *cmd, PVec *path) {
   return NULL;
 }
 
-void exec_external(PVec *cmd, PVec *path, enum ACTION *signal) {
+void exec_external(PVec *cmd, PVec *path, enum ACTION *signal, int batch) {
   char *absolute_path = resolve_path(cmd->start[0], path);
   if (absolute_path != NULL) {
     free(cmd->start[0]);
@@ -168,33 +170,41 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal) {
     pid_t pd = fork();
     if (pd == 0) {
       pvec_push(cmd, NULL);
+      if (*signal == PIPE) {
+        fclose(stdout);
+      }
       execv(absolute_path, (char **)cmd->start);
     } else if (pd > 0) {
-      if (*signal != ASYNC) {
-        int status;
-        waitpid(pd, &status, 0);
-      }
+      int status;
+      waitpid(pd, &status, *signal == ASYNC);
+      // TODO: report status when variables are implemented
     } else {
       // pd < 0
-      signal_error(1);
+      signal_error(1, batch);
     }
   } else {
-    printf("Could not find command: %s\n", cmd->start[0]);
+    signal_error(1, batch);
   }
   return;
 }
 
-void exec_command(PVec *cmd, PVec *path, enum ACTION *action) {
+// `cmd` is a the parsed command instruction. Calling exec_command gives
+// ownership of `cmd` to the callee. `path` is the exec-path for the shell. It
+// can be mutated but will end valid. `action` represents the current action
+// state, and can be mutated. `batch` indicates wither to execute in batch mode.
+void exec_command(PVec *cmd, PVec *path, enum ACTION *action, int batch) {
   if (!cmd->size || *action == EXIT) {
     return;
   }
   char *first = cmd->start[0];
   if (!strcmp(first, CD_COMMAND)) {
-    signal_error(cmd->size != 2);
+    signal_error(cmd->size != 2, batch);
     chdir(cmd->start[1]);
+    pvec_free(cmd);
   } else if (!strcmp(first, EXIT_COMMAND)) {
-    signal_error(cmd->size != 1);
+    signal_error(cmd->size != 1, batch);
     *action = EXIT;
+    pvec_free(cmd);
   } else if (!strcmp(first, PATH_COMMAND)) {
     size_t index = 1;
     // if the first command is "-+", then don't remove the old path
@@ -208,12 +218,17 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action) {
       pvec_push(path, cmd->start[index]);
     }
   } else {
-    exec_external(cmd, path, action);
+    exec_external(cmd, path, action, batch);
+    pvec_free(cmd);
   }
-  pvec_free(cmd);
 }
 
-void main_loop() {
+// Executes the main logic of the shell:
+// reading a line, then responding to it.
+// input is the input source,
+// batch = 1 => batch mode
+// batch = 0 => not batch mode
+void main_loop(FILE *input, int batch) {
   // setup path
   PVec path = pvec_make();
   char *defpath = malloc(sizeof(char) * (strlen(DEFAULT_PATH) + 1));
@@ -227,18 +242,19 @@ void main_loop() {
   enum ACTION action = NONE;
   while (action != EXIT) {
     action = NONE;
-    printf("%s", DEFAULT_PROMPT);
-    nread = getline(&line, &len, stdin);
+    if (!batch)
+      printf("%s", DEFAULT_PROMPT);
+    nread = getline(&line, &len, input);
     if (nread < 0) {
-      printf("\n");
-      return;
+      if (!batch)
+        printf("\n");
+      action = EXIT;
     }
     int line_end = strlen(line);
     int read_to = 0;
     while (line_end != read_to && action != EXIT) {
-      PVec command = seperate_line(line, &read_to, &action);
-      // printf("action state %d\n", action);
-      exec_command(&command, &path, &action);
+      PVec command = seperate_line(line, &read_to, &action, batch);
+      exec_command(&command, &path, &action, batch);
     }
   }
   free(line);
@@ -247,10 +263,15 @@ void main_loop() {
 
 int main(int argc, char **argv) {
   if (argc == 1) {
-    main_loop();
+    main_loop(stdin, 0);
   } else if (argc == 2) {
-    printf("TODO: read in batch file");
-    exit(2);
+    FILE *file = fopen(argv[1], "r");
+    if (file == NULL)
+      signal_error(file == NULL, 0);
+    else {
+      main_loop(file, 1);
+      fclose(file);
+    }
   } else {
     printf("usage: wish [file]\n");
     exit(1);
