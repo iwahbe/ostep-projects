@@ -12,6 +12,7 @@
  * */
 
 #include <assert.h>
+#include <errno.h>
 #include <readline/readline.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -85,6 +86,28 @@ void *pvec_pop(PVec *vec) {
   } else {
     return vec->start[--vec->size];
   }
+}
+
+char *pvec_concat(PVec *vec, char *sep) {
+  int sep_length = strlen(sep);
+  int total_length = 0;
+  for (size_t i = 0; i < vec->size; i++) {
+    total_length += strlen(vec->start[i]) + sep_length;
+  }
+  // Concatonating an empty vector yields the empty string.
+  if (total_length == 0) {
+    char *empty = malloc(sizeof(char) * 1);
+    *empty = '\0';
+    return empty;
+  }
+  char *out = malloc(sizeof(char) * (total_length + 1));
+  *out = '\0';
+  for (size_t i = 0; i + 1 < vec->size; i++) {
+    strcat(out, vec->start[i]);
+    strcat(out, sep);
+  }
+  strcat(out, vec->start[vec->size - 1]);
+  return out;
 }
 
 // Frees each element in `vec`, then frees the vector itself.
@@ -165,6 +188,118 @@ PVec seperate_line(char *line, int *index, enum ACTION *action) {
   return vec;
 }
 
+int get_working_dir(char **buf, size_t *size) {
+  // happily copied from the example for `getcwd`.
+  long path_max;
+  char *ptr;
+
+  path_max = pathconf(".", _PC_PATH_MAX);
+  if (path_max == -1)
+    *size = 1024;
+  else if (path_max > 10240)
+    *size = 10240;
+  else
+    *size = path_max;
+  ptr = NULL;
+  for (*buf = malloc(sizeof(char) * *size); ptr == NULL; *size *= 2) {
+    ptr = getcwd(*buf, *size);
+    if (ptr == NULL && errno != ERANGE) {
+      return 0;
+    }
+    if ((*buf = realloc(*buf, *size)) == NULL) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+PVec listify_path(char *path, int *error) {
+  PVec list = pvec_make();
+  *error = 0;
+  char *cmd_cpy = malloc(sizeof(char) * (strlen(path) + 1));
+  strcpy(cmd_cpy, path);
+  char *pvar = NULL;
+  int first = 0;
+  while ((pvar = strsep(&cmd_cpy, "/")) != NULL) {
+    if (!strcmp("", pvar) && first++ != 0)
+      *error = 1;
+    pvec_push(&list, pvar);
+  }
+  return list;
+}
+
+// Resolve `command` if `command` is an absolute path.
+// Takes effect only if the leading char is '/' or '~'.
+char *resolve_absolute(char *command) {
+  if (command[0] == '~') {
+    char *home = getenv("HOME");
+    char *out = malloc(sizeof(char) * strlen(command) +
+                       strlen(home)); // null terminator accounted for by the ~
+    strcpy(out, home);
+    strcat(out, command);
+    return out;
+  } else if (command[0] == '/' && !access(command, X_OK)) {
+    char *out = malloc(sizeof(char) * (strlen(command) + 1));
+    strcpy(out, command);
+    return out;
+  } else
+    return NULL;
+}
+
+// TODO: merge relative and absolute
+
+// Resolves relative to the current working directory.
+char *resolve_relative(char *command) {
+  PVec original;
+  int error1 = 0;
+  if (command[0] == '.') {
+    // setup relative path
+    size_t buf_size;
+    char *origin_path;
+    if (!get_working_dir(&origin_path, &buf_size)) {
+      free(origin_path);
+      return NULL;
+    }
+    original = listify_path(origin_path, &error1);
+    free(origin_path);
+  } else if (command[0] == '~') {
+    // setup path from home dir
+    char *home = getenv("HOME");
+    original = listify_path(home, &error1);
+  } else if (command[0] == '/' && !access(command, X_OK)) {
+    // absolte path has no starting place
+    original = pvec_make();
+  } else {
+    return NULL;
+  }
+  int error2;
+  PVec delta = listify_path(command, &error2);
+  if (error1 || error2) {
+    pvec_free(&original);
+    pvec_free(&delta);
+    return NULL;
+  }
+  char *pvar;
+  for (size_t i = 0; i < delta.size; i++) {
+    pvar = delta.start[i];
+    if (!strcmp(".", pvar)) {
+    } else if (!strcmp("..", pvar)) {
+      // truncate up
+      free(pvec_pop(&original));
+    } else {
+      pvec_push(&original, pvar);
+      delta.start[i] = malloc(1);
+    }
+  }
+  char *out = pvec_concat(&original, "/");
+  pvec_free(&delta);
+  if (!access(out, X_OK))
+    return out;
+  else {
+    return NULL;
+  }
+}
+
 // Resolves `command` to it's absolute path by iterating through `path`,
 // returing the first entry found. If no valid entry is found, returns `NULL`.
 char *resolve_path(char *command, PVec *path) {
@@ -185,6 +320,18 @@ char *resolve_path(char *command, PVec *path) {
   }
   free(hold_str);
   return NULL;
+}
+
+// Resolves the path of `command`.
+char *resolve_command(char *command, PVec *path) {
+  if (command == NULL)
+    return NULL;
+  char *res = resolve_absolute(command);
+  if (res == NULL)
+    res = resolve_relative(command);
+  if (res == NULL)
+    res = resolve_path(command, path);
+  return res;
 }
 
 // Takes a command `cmd`, a pointer to a string `file`.
@@ -213,7 +360,7 @@ int handle_redirect(PVec *cmd, char **file) {
 // `path`, `action`, and `processes` are treated the same as `exec_command`.
 void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
                    PVec *processes) {
-  char *absolute_path = resolve_path(cmd->start[0], path);
+  char *absolute_path = resolve_command(cmd->start[0], path);
   free(cmd->start[0]);
   cmd->start[0] = absolute_path;
   if (absolute_path != NULL) {
@@ -266,7 +413,9 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
   } else if (!strcmp(first, PATH_COMMAND)) {
     size_t index = 1;
     // if the first command is "-+", then don't remove the old path
-    if (cmd->size > 1 && !(strcmp(cmd->start[1], "-+"))) {
+    if (cmd->size > 1 && !(strcmp(cmd->start[1], "-e"))) {
+      printf("path = \"%s\"\n", pvec_concat(path, ":"));
+    } else if (cmd->size > 1 && !(strcmp(cmd->start[1], "-+"))) {
       index = 2;
     } else {
       while (pvec_pop(path) != NULL) {

@@ -269,4 +269,4 @@ Extra challenges
 3. [ ] Input redirection, supporting the `<` operator.
 4. [ ] Support the `|` (Pipe) operator.
 5. [ ] Include real error messages (with `perror()`) for "every single error condition".
-6. [ ] Handle relative and absolute paths.
+6. [x] Handle relative and absolute paths.

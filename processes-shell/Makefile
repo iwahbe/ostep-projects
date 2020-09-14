@@ -3,13 +3,12 @@ CC = gcc
 
 .PHONY = test clean wtest 3test
 
-
 wish : wish.c
-	${CC} wish.c -o wish
+	${CC} wish.c -o wish ${ARGS}
 
 3wish : 3wish.c readline-8.0
 	${CC} 3wish.c -c
-	${CC} -o 3wish 3wish.o readline-8.0/libreadline.a -lncurses
+	${CC} -o 3wish 3wish.o readline-8.0/libreadline.a -lncurses ${ARGS}
 
 test : wtest 3test
 
@@ -32,4 +31,6 @@ readline-8.0 :
 	cd readline-8.0 && ./configure && make
 
 clean :
-	@rm *.o
+	@ [ -z $(ls | grep -e .\*\\.o) ] || rm *.o
+	@ [ -f 3wish ] && rm 3wish || :
+	@ [ -f wish ] && rm wish || :
