@@ -281,6 +281,32 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
   }
 }
 
+// Returns PVec containing the local path. If native is != 0, will grab the
+// native path from the calling enviromental variable `PATH`. If `PATH` is not
+// set, it will signal an error by setting `error` to 1, and set the default
+// path. If native == 0, then the default path is set.
+PVec get_path(int native, int *error) {
+  PVec path = pvec_make();
+  if (native) {
+    char *native = getenv("PATH");
+    *error = native == NULL;
+    if (native != NULL) {
+      char *pvar;
+      while ((pvar = strsep(&native, ":")) != NULL) {
+        char *pcpy = malloc(sizeof(char) * (strlen(pvar) + 1));
+        strcpy(pcpy, pvar);
+        pvec_push(&path, pcpy);
+      }
+    }
+  }
+  if (!native || *error) {
+    char *defpath = malloc(sizeof(char) * (strlen(DEFAULT_PATH) + 1));
+    strcpy(defpath, DEFAULT_PATH);
+    pvec_push(&path, defpath);
+  }
+  return path;
+}
+
 // Executes the main logic of the shell:
 // reading a line, then responding to it.
 // input is the input source,
@@ -288,10 +314,8 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
 // batch = 0 => not batch mode
 void main_loop(FILE *input, int batch) {
   // setup path
-  PVec path = pvec_make();
-  char *defpath = malloc(sizeof(char) * (strlen(DEFAULT_PATH) + 1));
-  strcpy(defpath, DEFAULT_PATH);
-  pvec_push(&path, defpath);
+  int path_error = 0;
+  PVec path = get_path(1, &path_error);
 
   // setup getline
   char *line = NULL;
