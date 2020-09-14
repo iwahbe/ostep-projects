@@ -3,6 +3,8 @@ CC = gcc
 
 .PHONY = test clean wtest 3test
 
+ARGS = -Wextras
+
 wish : wish.c
 	${CC} wish.c -o wish ${ARGS}
 

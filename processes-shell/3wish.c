@@ -88,6 +88,24 @@ void *pvec_pop(PVec *vec) {
   }
 }
 
+// Pops the nth element of `vec`.
+// Returns NULL if no element is found.
+void *pvec_pop_nth(PVec *vec, size_t n) {
+  if (vec->size < n) {
+    return NULL;
+  } else {
+    void *out = vec->start[n];
+    printf("poped out '%s' at '%zu'\n", out, n);
+    size_t i = n + 1;
+    while (i < vec->size) {
+      vec->start[i - 1] = vec->start[i];
+      i++;
+    }
+    vec->size--;
+    return out;
+  }
+}
+
 char *pvec_concat(PVec *vec, char *sep) {
   int sep_length = strlen(sep);
   int total_length = 0;
@@ -145,7 +163,7 @@ int end_of_line_p(char c, enum ACTION *type) {
 
 // Tests for special operators. A special operator works like a single charicter
 // word with respect to parsing.
-int special_char_p(char c) { return c == '>'; }
+int special_char_p(char c) { return c == '>' || c == '<'; }
 
 // test if c represents an argument seperator
 int arg_seperator_p(char c) { return c == ' ' || c == '\t'; }
@@ -339,14 +357,19 @@ char *resolve_command(char *command, PVec *path) {
 // Return:
 // < 0 => an error occured.
 // = 0 => no redirect detected.
-// > 0 => redirect detected cmd and file modified.
-int handle_redirect(PVec *cmd, char **file) {
+// > 0 => redirect detected cmd and file is the string of the input file.
+int handle_redirect(PVec *cmd, char **file, char *trigger, char *after) {
   size_t index = 0;
   for (; index < cmd->size; index++) {
-    if (!strcmp(cmd->start[index], ">")) {
-      if (index + 2 == cmd->size) {
-        *file = (char *)pvec_pop(cmd);
-        free(pvec_pop(cmd));
+    if (!strcmp(cmd->start[index], trigger)) {
+      printf("found trigger(%s)\n", trigger);
+      if (index + 2 == cmd->size || // at then end
+          (cmd->size > index + 2 && !strcmp(cmd->start[index + 2], after)))
+      // a proceding term is after
+      {
+        printf("popping (%s)\n", trigger);
+        *file = (char *)pvec_pop_nth(cmd, index + 1);
+        free(pvec_pop_nth(cmd, index));
         return 1;
       } else {
         return -1;
@@ -366,12 +389,27 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
   if (absolute_path != NULL) {
     pid_t pd = fork();
     if (pd == 0) {
-      char *pipe_to;
-      int handle_res = handle_redirect(cmd, &pipe_to);
-      if (handle_res > 0) {
+      char *pipe_to, *pipe_from;
+      int handle_output_res = handle_redirect(cmd, &pipe_to, ">", "<");
+      int handle_input_res = handle_redirect(cmd, &pipe_from, "<", ">");
+      if (handle_input_res > 0) {
+        if (access(pipe_from, R_OK)) {
+          // read permission is false
+          signal_error(1, 1);
+        }
+        fclose(stdin);
+        fopen(pipe_from, "r");
+        free(pipe_from);
+      } else if (handle_input_res < 0) {
+        signal_error(1, 0);
+        return;
+      }
+
+      if (handle_output_res > 0) {
         fclose(stdout);
         fopen(pipe_to, "w");
-      } else if (handle_res < 0) {
+        free(pipe_to);
+      } else if (handle_output_res < 0) {
         signal_error(1, 0);
         return;
       } else if (*signal == PIPE) {
