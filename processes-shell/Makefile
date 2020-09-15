@@ -3,7 +3,9 @@ CC = clang
 
 .PHONY = test clean wtest 3test
 
-ARGS = -Wextras -fsanitize=address -g
+ARGS = -Wextra -fsanitize=address -g
+
+all : wish 3wish
 
 wish : wish.c
 	${CC} wish.c -o wish ${ARGS}
