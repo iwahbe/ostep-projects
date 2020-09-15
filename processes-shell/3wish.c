@@ -398,7 +398,9 @@ int handle_redirect(PVec *cmd, char **file, char *trigger, char *after) {
   return 0;
 }
 
-int pipe_p(char *maybe_pipe) { return !strcmp(maybe_pipe, "|"); }
+int pipe_p(char *maybe_pipe) {
+  return maybe_pipe != NULL && !strcmp(maybe_pipe, "|");
+}
 
 // Exectues an non-builtin command. `cmd` is the parsed command to be executed.
 // `path`, `action`, and `processes` are treated the same as `exec_command`.
@@ -409,7 +411,8 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
   cmd->start[0] = absolute_path;
   char *pipe_to, *pipe_from;
   PVec pipe_cmd = pvec_split(cmd, (int (*)(void *)) & pipe_p, 0);
-  char *pipe_absolute_path = resolve_path(pipe_cmd.start[0], path);
+  char *pipe_absolute_path =
+      pipe_cmd.size ? resolve_path(pipe_cmd.start[0], path) : NULL;
   if (pipe_absolute_path != NULL) {
     free(pipe_cmd.start[0]);
     pipe_cmd.start[0] = pipe_absolute_path;
@@ -418,12 +421,13 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
   int handle_output_res;
   if (absolute_path != NULL) {
     pid_t pd = fork();
-    if (pipe_cmd.size > 0) {
-      fclose(stdin);
-      popen(pipe_rest, "r");
-    }
     if (pd == 0) {
-      if (pipe_cmd.size <= 0)
+      if (pipe_cmd.size > 0) {
+        FILE *out = popen(pipe_rest, "w");
+        fclose(stdout);
+        dup2(fileno(out), STDOUT_FILENO);
+      }
+      if (pipe_cmd.size == 0)
         handle_output_res = handle_redirect(cmd, &pipe_to, ">", "<");
       else
         handle_output_res = 0;
@@ -563,7 +567,7 @@ void main_loop(FILE *input, int batch) {
         printf("\n");
       action = EXIT;
     }
-    int line_end = strlen(line);
+    int line_end = line ? strlen(line) : 0;
     if (line_end > 0)
       add_history(line);
     int read_to = 0;
