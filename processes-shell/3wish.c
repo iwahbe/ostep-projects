@@ -95,7 +95,6 @@ void *pvec_pop_nth(PVec *vec, size_t n) {
     return NULL;
   } else {
     void *out = vec->start[n];
-    printf("poped out '%s' at '%zu'\n", out, n);
     size_t i = n + 1;
     while (i < vec->size) {
       vec->start[i - 1] = vec->start[i];
@@ -104,6 +103,31 @@ void *pvec_pop_nth(PVec *vec, size_t n) {
     vec->size--;
     return out;
   }
+}
+
+PVec pvec_split(PVec *vec, int(predicate)(void *), int append) {
+  size_t index = 0;
+  PVec out = pvec_make();
+  while (index < vec->size && !predicate(vec->start[index])) {
+    index++;
+  }
+  if (index == vec->size) {
+    return out;
+  }
+  size_t old_size = vec->size;
+  if (append > 0) {
+    // the found element is included in the new vector
+  } else if (append == 0) {
+    index++; // the found element is skipped
+    vec->size--;
+  } else {
+    index += 2; // the found element is left in the old vector;
+  }
+  for (; index < old_size; index++) {
+    pvec_push(&out, vec->start[index]);
+    vec->size--;
+  }
+  return out;
 }
 
 char *pvec_concat(PVec *vec, char *sep) {
@@ -150,9 +174,6 @@ int end_of_line_p(char c, enum ACTION *type) {
   } else if (c == EOF) {
     *type = EXIT;
     return 1;
-  } else if (c == '|') {
-    *type = PIPE;
-    return 1;
   } else if (c == '&') {
     *type = ASYNC;
     return 1;
@@ -163,7 +184,7 @@ int end_of_line_p(char c, enum ACTION *type) {
 
 // Tests for special operators. A special operator works like a single charicter
 // word with respect to parsing.
-int special_char_p(char c) { return c == '>' || c == '<'; }
+int special_char_p(char c) { return c == '>' || c == '<' || c == '|'; }
 
 // test if c represents an argument seperator
 int arg_seperator_p(char c) { return c == ' ' || c == '\t'; }
@@ -359,15 +380,13 @@ char *resolve_command(char *command, PVec *path) {
 // = 0 => no redirect detected.
 // > 0 => redirect detected cmd and file is the string of the input file.
 int handle_redirect(PVec *cmd, char **file, char *trigger, char *after) {
-  size_t index = 0;
+  size_t index = 1; // We hold that the first char cannot be a redirect char
   for (; index < cmd->size; index++) {
     if (!strcmp(cmd->start[index], trigger)) {
-      printf("found trigger(%s)\n", trigger);
       if (index + 2 == cmd->size || // at then end
           (cmd->size > index + 2 && !strcmp(cmd->start[index + 2], after)))
       // a proceding term is after
       {
-        printf("popping (%s)\n", trigger);
         *file = (char *)pvec_pop_nth(cmd, index + 1);
         free(pvec_pop_nth(cmd, index));
         return 1;
@@ -379,6 +398,8 @@ int handle_redirect(PVec *cmd, char **file, char *trigger, char *after) {
   return 0;
 }
 
+int pipe_p(char *maybe_pipe) { return !strcmp(maybe_pipe, "|"); }
+
 // Exectues an non-builtin command. `cmd` is the parsed command to be executed.
 // `path`, `action`, and `processes` are treated the same as `exec_command`.
 void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
@@ -386,11 +407,26 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
   char *absolute_path = resolve_command(cmd->start[0], path);
   free(cmd->start[0]);
   cmd->start[0] = absolute_path;
+  char *pipe_to, *pipe_from;
+  PVec pipe_cmd = pvec_split(cmd, (int (*)(void *)) & pipe_p, 0);
+  char *pipe_absolute_path = resolve_path(pipe_cmd.start[0], path);
+  if (pipe_absolute_path != NULL) {
+    free(pipe_cmd.start[0]);
+    pipe_cmd.start[0] = pipe_absolute_path;
+  }
+  char *pipe_rest = pvec_concat(&pipe_cmd, " ");
+  int handle_output_res;
   if (absolute_path != NULL) {
     pid_t pd = fork();
+    if (pipe_cmd.size > 0) {
+      fclose(stdin);
+      popen(pipe_rest, "r");
+    }
     if (pd == 0) {
-      char *pipe_to, *pipe_from;
-      int handle_output_res = handle_redirect(cmd, &pipe_to, ">", "<");
+      if (pipe_cmd.size <= 0)
+        handle_output_res = handle_redirect(cmd, &pipe_to, ">", "<");
+      else
+        handle_output_res = 0;
       int handle_input_res = handle_redirect(cmd, &pipe_from, "<", ">");
       if (handle_input_res > 0) {
         if (access(pipe_from, R_OK)) {
