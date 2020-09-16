@@ -22,7 +22,7 @@ wtest : wish
 3test : 3wish
 	@ [ -f wish ] && mv wish wish-backup
 	@mv 3wish wish
-	./test-wish.sh
+	./test-wish.sh || mv wish 3wish && [ -f wish-backup ] && mv wish-backup wish
 	@mv wish 3wish
 	@ [ -f wish-backup ] && mv wish-backup wish
 

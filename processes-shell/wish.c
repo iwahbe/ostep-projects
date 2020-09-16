@@ -1,15 +1,8 @@
 
 /*
- * support batch mode (where given an input file)
- * Use getline()
- *
- * consider strsep() to parse
- *
- * execv() for running commands
- *
- *
- *
- * */
+ * This file implements a basic shell as described by README.md with out any
+ * additions.
+ */
 
 #include <assert.h>
 #include <stdio.h>
@@ -35,13 +28,14 @@ const char ERROR_MESSAGE[30] = "An error has occurred\n";
 
 enum ACTION { EXIT, NONE, PIPE, ASYNC, REDIRECT };
 
-void signal_error(int throw, int hard) {
+int signal_error(int throw, int hard) {
   if (throw) {
     write(STDERR_FILENO, ERROR_MESSAGE, strlen(ERROR_MESSAGE));
     if (hard) {
       exit(1);
     }
   }
+  return throw;
 }
 
 // A vector of pointers
@@ -255,13 +249,15 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
   }
   char *first = cmd->start[0];
   if (!strcmp(first, CD_COMMAND)) {
-    signal_error(cmd->size != 2, 0);
-    chdir(cmd->start[1]);
+    if (!signal_error(cmd->size != 2, 0))
+      chdir(cmd->start[1]);
     pvec_free(cmd);
+
   } else if (!strcmp(first, EXIT_COMMAND)) {
-    signal_error(cmd->size != 1, 0);
-    *action = EXIT;
+    if (!signal_error(cmd->size != 1, 0))
+      *action = EXIT;
     pvec_free(cmd);
+
   } else if (!strcmp(first, PATH_COMMAND)) {
     size_t index = 1;
     // if the first command is "-+", then don't remove the old path
