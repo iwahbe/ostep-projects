@@ -17,9 +17,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/_types/_errno_t.h>
 #include <sys/_types/_pid_t.h>
 #include <sys/_types/_size_t.h>
 #include <sys/_types/_ssize_t.h>
+#include <sys/errno.h>
 #include <sys/unistd.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -35,13 +37,21 @@ const char *ADD_PATH_COMMAND = "-+";
 const char *CD_COMMAND = "cd";
 const char *EXIT_COMMAND = "exit";
 
-const char ERROR_MESSAGE[30] = "An error has occurred\n";
-
 enum ACTION { EXIT, NONE, PIPE, ASYNC, REDIRECT };
 
-void signal_error(int throw, int hard) {
+#ifdef TEST_ERROR
+const char ERROR_MESSAGE[30] = "An error has occurred\n";
+#else
+#define ERROR_MESSAGE(s) ("3wish: " s)
+#endif
+
+void signal_error(int throw, int hard, char *message) {
   if (throw) {
+#ifdef TEST_ERROR
     write(STDERR_FILENO, ERROR_MESSAGE, strlen(ERROR_MESSAGE));
+#else
+    perror(message ? message : strerror(errno));
+#endif
     if (hard) {
       exit(1);
     }
@@ -217,7 +227,7 @@ PVec seperate_line(char *line, int *index, enum ACTION *action) {
     int word_length = *index - word_start;
     if (word_length > 0) {
       char *str = (char *)malloc(sizeof(char) * (word_length + 1));
-      signal_error(str == NULL, 0);
+      signal_error(str == NULL, 0, NULL);
       memcpy(str, line + word_start, word_length);
       str[word_length] = '\0';
       pvec_push(&vec, str);
@@ -437,14 +447,14 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
       if (handle_input_res > 0) {
         if (!access(pipe_from, R_OK)) {
           // read permission is false
-          signal_error(1, 0);
+          signal_error(1, 0, NULL);
         } else {
           fclose(stdin);
           fopen(pipe_from, "r");
           free(pipe_from);
         }
       } else if (handle_input_res < 0) {
-        signal_error(1, 0);
+        signal_error(1, 0, NULL);
         return;
       }
 
@@ -453,7 +463,7 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
         fopen(pipe_to, "w");
         free(pipe_to);
       } else if (handle_output_res < 0) {
-        signal_error(1, 0);
+        signal_error(1, 0, NULL);
         return;
       } else if (*signal == PIPE) {
       }
@@ -466,10 +476,11 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
       // TODO: report status when variables are implemented
     } else {
       // pd < 0
-      signal_error(1, 0);
+      signal_error(1, 0, NULL);
     }
   } else {
-    signal_error(1, 0);
+    errno = ENOENT;
+    signal_error(1, 0, ERROR_MESSAGE("Could not find command in path"));
   }
 }
 
@@ -484,11 +495,15 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
   }
   char *first = cmd->start[0];
   if (!strcmp(first, CD_COMMAND)) {
-    signal_error(cmd->size != 2, 0);
+    errno = E2BIG;
+    signal_error(cmd->size != 2, 0,
+                 ERROR_MESSAGE("The \"cd\" command takes 1 argument"));
     chdir(cmd->start[1]);
     pvec_free(cmd);
   } else if (!strcmp(first, EXIT_COMMAND)) {
-    signal_error(cmd->size != 1, 0);
+    errno = E2BIG;
+    signal_error(cmd->size != 1, 0,
+                 ERROR_MESSAGE("The \"exit\" command takes 0 arguments."));
     *action = EXIT;
     pvec_free(cmd);
   } else if (!strcmp(first, PATH_COMMAND)) {
@@ -600,15 +615,14 @@ int main(int argc, char **argv) {
   } else if (argc == 2) {
     FILE *file = fopen(argv[1], "r");
     if (file == NULL)
-      signal_error(file == NULL, 1);
+      signal_error(file == NULL, 1,
+                   ERROR_MESSAGE("Could not find batch input file"));
     else {
       main_loop(file, 1);
       fclose(file);
     }
   } else {
-    if (0)
-      printf("usage: wish [file]\n");
-    else
-      signal_error(1, 1);
+    errno = EINVAL;
+    signal_error(1, 1, ERROR_MESSAGE("usage: wish [file]"));
   }
 }

@@ -1,4 +1,3 @@
-
 CC = clang
 
 .PHONY = test clean wtest 3test
@@ -13,7 +12,7 @@ wish : wish.c
 	${CC} wish.c -o wish ${ARGS}
 
 3wish : 3wish.c readline-8.0
-	${CC} 3wish.c -c
+	${CC} 3wish.c -c ${CFLAGS}
 	${CC} -o 3wish 3wish.o readline-8.0/libreadline.a -lncurses ${ARGS}
 
 test : wtest 3test
@@ -21,12 +20,13 @@ test : wtest 3test
 wtest : wish
 	./test-wish.sh
 
+3test : ARGS += ${DEBUG}
+3test : CFLAGS = "-DTEST_ERROR=1"
 3test : 3wish
 	@ [ -f wish ] && mv wish wish-backup || true
 	@mv 3wish wish
-	./test-wish.sh || "{ mv wish 3wish && [ -f wish-backup ] && mv wish-backup wish && false }"
+	./test-wish.sh || mv wish 3wish
 	@mv wish 3wish
-	@ [ -f wish-backup ] && mv wish-backup wish
 
 
 readline-8.0 :
