@@ -13,8 +13,7 @@
 
 #include <assert.h>
 #include <errno.h>
-#include <readline/readline.h>
-#include <stdio.h>
+#include <stdio.h> // note stdio.h must come before readline
 #include <stdlib.h>
 #include <string.h>
 #include <sys/errno.h>
@@ -22,6 +21,9 @@
 #include <sys/unistd.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#include <readline/history.h>
+#include <readline/readline.h>
 
 const char *PROMPT_VAR = "PS1";
 const char *DEFAULT_PROMPT = "wish> ";
@@ -463,15 +465,17 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
       pvec_push(cmd, NULL);
       execv(absolute_path, (char **)cmd->start);
     } else if (pd > 0) {
-      free(absolute_path);
       int status;
-      pvec_push(processes, (void *)(long)pd);
+      pvec_push(processes,
+                (void *)(long)
+                    pd); // NOTE: confuses valgrind.
+                         // Causes valgrind to think there is a leak of 8 bytes.
       waitpid(pd, &status, *signal == ASYNC);
-      // TODO: report status when variables are implemented
     } else {
       // pd < 0
       signal_error(1, 0, NULL);
     }
+    free(absolute_path);
   } else {
     errno = ENOENT;
     signal_error(1, 0, ERROR_MESSAGE("Could not find command in path"));
