@@ -205,8 +205,6 @@ int handle_redirect(PVec *cmd, char **file) {
 void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
                    PVec *processes) {
   char *absolute_path = resolve_path(cmd->start[0], path);
-  free(cmd->start[0]);
-  cmd->start[0] = absolute_path;
   if (absolute_path != NULL) {
     pid_t pd = fork();
     if (pd == 0) {
@@ -223,6 +221,7 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
       pvec_push(cmd, NULL);
       execv(absolute_path, (char **)cmd->start);
     } else if (pd > 0) {
+      free(absolute_path);
       int status;
       pvec_push(processes, (void *)(long)pd);
       waitpid(pd, &status, *signal == ASYNC);
