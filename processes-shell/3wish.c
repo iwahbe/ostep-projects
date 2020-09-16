@@ -17,11 +17,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/_types/_errno_t.h>
-#include <sys/_types/_pid_t.h>
-#include <sys/_types/_size_t.h>
-#include <sys/_types/_ssize_t.h>
 #include <sys/errno.h>
+#include <sys/types.h>
 #include <sys/unistd.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -39,16 +36,14 @@ const char *EXIT_COMMAND = "exit";
 
 enum ACTION { EXIT, NONE, PIPE, ASYNC, REDIRECT };
 
-#ifdef TEST_ERROR
-const char ERROR_MESSAGE[30] = "An error has occurred\n";
-#else
+const char TEST_ERROR_MESSAGE[30] = "An error has occurred\n";
+
 #define ERROR_MESSAGE(s) ("3wish: " s)
-#endif
 
 void signal_error(int throw, int hard, char *message) {
   if (throw) {
 #ifdef TEST_ERROR
-    write(STDERR_FILENO, ERROR_MESSAGE, strlen(ERROR_MESSAGE));
+    write(STDERR_FILENO, TEST_ERROR_MESSAGE, strlen(TEST_ERROR_MESSAGE));
 #else
     perror(message ? message : strerror(errno));
 #endif
