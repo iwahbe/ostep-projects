@@ -3,9 +3,11 @@ CC = clang
 
 .PHONY = test clean wtest 3test
 
-ARGS = -Wextra -fsanitize=address -g
+DEBUG = -fsanitize=address -g
 
-all : wish 3wish
+ARGS = -Wextra
+
+all : wish 3wish test
 
 wish : wish.c
 	${CC} wish.c -o wish ${ARGS}
@@ -20,9 +22,9 @@ wtest : wish
 	./test-wish.sh
 
 3test : 3wish
-	@ [ -f wish ] && mv wish wish-backup
+	@ [ -f wish ] && mv wish wish-backup || true
 	@mv 3wish wish
-	./test-wish.sh || mv wish 3wish && [ -f wish-backup ] && mv wish-backup wish
+	./test-wish.sh || "{ mv wish 3wish && [ -f wish-backup ] && mv wish-backup wish && false }"
 	@mv wish 3wish
 	@ [ -f wish-backup ] && mv wish-backup wish
 
@@ -35,6 +37,7 @@ readline-8.0 :
 	cd readline-8.0 && ./configure && make
 
 clean :
-	@ [ -z $(ls | grep -e .\*\\.o) ] || rm *.o
-	@ [ -f 3wish ] && rm 3wish || :
-	@ [ -f wish ] && rm wish || :
+	@ rm *.o 2&> /dev/null || true
+	@ [ -e tests-out ] && rm -r tests-out || true
+	@ [ -f 3wish ] && rm 3wish || true
+	@ [ -f wish ] && rm wish || true

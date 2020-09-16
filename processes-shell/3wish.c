@@ -433,13 +433,14 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
         handle_output_res = 0;
       int handle_input_res = handle_redirect(cmd, &pipe_from, "<", ">");
       if (handle_input_res > 0) {
-        if (access(pipe_from, R_OK)) {
+        if (!access(pipe_from, R_OK)) {
           // read permission is false
-          signal_error(1, 1);
+          signal_error(1, 0);
+        } else {
+          fclose(stdin);
+          fopen(pipe_from, "r");
+          free(pipe_from);
         }
-        fclose(stdin);
-        fopen(pipe_from, "r");
-        free(pipe_from);
       } else if (handle_input_res < 0) {
         signal_error(1, 0);
         return;
@@ -493,6 +494,7 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
     // if the first command is "-+", then don't remove the old path
     if (cmd->size > 1 && !(strcmp(cmd->start[1], "-e"))) {
       printf("path = \"%s\"\n", pvec_concat(path, ":"));
+      index = cmd->size;
     } else if (cmd->size > 1 && !(strcmp(cmd->start[1], "-+"))) {
       index = 2;
     } else {
@@ -518,12 +520,15 @@ PVec get_path(int native, int *error) {
     char *native = getenv("PATH");
     *error = native == NULL;
     if (native != NULL) {
+      char *ncopy = malloc(sizeof(char) * (strlen(native) + 1));
+      strcpy(ncopy, native);
       char *pvar;
-      while ((pvar = strsep(&native, ":")) != NULL) {
+      while ((pvar = strsep(&ncopy, ":")) != NULL) {
         char *pcpy = malloc(sizeof(char) * (strlen(pvar) + 1));
         strcpy(pcpy, pvar);
         pvec_push(&path, pcpy);
       }
+      free(ncopy);
     }
   }
   if (!native || *error) {
