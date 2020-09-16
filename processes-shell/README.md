@@ -267,6 +267,6 @@ Extra challenges
 1. [x] Use readline instead of getline.
 2. [x] Get the initial path from the `$PATH` variable.
 3. [x] Input redirection, supporting the `<` operator.
-4. [ ] Support the `|` (Pipe) operator.
+4. [x] Support the `|` (Pipe) operator.
 5. [ ] Include real error messages (with `perror()`) for "every single error condition".
 6. [x] Handle relative and absolute paths.

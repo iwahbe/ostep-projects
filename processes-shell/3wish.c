@@ -29,6 +29,8 @@ const char *DEFAULT_PROMPT = "wish> ";
 
 const char *PATH_COMMAND = "path";
 const char *DEFAULT_PATH = "/bin";
+const char *SHOW_PATH_COMMAND = "-e";
+const char *ADD_PATH_COMMAND = "-+";
 
 const char *CD_COMMAND = "cd";
 const char *EXIT_COMMAND = "exit";
@@ -492,10 +494,10 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
   } else if (!strcmp(first, PATH_COMMAND)) {
     size_t index = 1;
     // if the first command is "-+", then don't remove the old path
-    if (cmd->size > 1 && !(strcmp(cmd->start[1], "-e"))) {
+    if (cmd->size > 1 && !(strcmp(cmd->start[1], SHOW_PATH_COMMAND))) {
       printf("path = \"%s\"\n", pvec_concat(path, ":"));
       index = cmd->size;
-    } else if (cmd->size > 1 && !(strcmp(cmd->start[1], "-+"))) {
+    } else if (cmd->size > 1 && !(strcmp(cmd->start[1], ADD_PATH_COMMAND))) {
       index = 2;
     } else {
       while (pvec_pop(path) != NULL) {
