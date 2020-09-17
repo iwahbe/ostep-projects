@@ -20,7 +20,6 @@ test : wtest 3test
 wtest : wish
 	./test-wish.sh
 
-3test : ARGS += ${DEBUG}
 3test : CFLAGS = "-DTEST_ERROR=1"
 3test : 3wish
 	@ [ -f wish ] && mv wish wish-backup || true

@@ -1,5 +1,25 @@
 # Unix Shell
 
+## Extra challenges
+
+1. [x] Use readline instead of getline.
+2. [x] Get the initial path from the `$PATH` variable.
+3. [x] Input redirection, supporting the `<` operator.
+4. [x] Support the `|` (Pipe) operator.
+5. [x] Include real error messages (with `perror()`) for "every single error condition".
+6. [x] Handle relative and absolute paths.
+
+## Building and running
+
+I assume that ncurses is installed, and will install readline if it doesn't
+already exist. I use clang, along with libc.
+
+`make wtest` will test the default base project. `make 3test` will build and run
+3wish. This will fail if a non-test version of 3wish already exists. Useful
+error messages fail the builtin tests, so they exist under a compilation flag.
+
+## Project Description
+
 In this project, you'll build a simple Unix shell. The shell is the heart of
 the command-line interface, and thus is central to the Unix/C programming
 environment. Mastering use of the shell is necessary to become proficient in
@@ -259,14 +279,3 @@ functionality working, make a copy of your .c file (perhaps a subdirectory
 with a version number, such as v1, v2, etc.). By keeping older, working
 versions around, you can comfortably work on adding new functionality, safe in
 the knowledge you can always go back to an older, working version if need be.
-
-###
-
-Extra challenges
-
-1. [x] Use readline instead of getline.
-2. [x] Get the initial path from the `$PATH` variable.
-3. [x] Input redirection, supporting the `<` operator.
-4. [x] Support the `|` (Pipe) operator.
-5. [x] Include real error messages (with `perror()`) for "every single error condition".
-6. [x] Handle relative and absolute paths.
