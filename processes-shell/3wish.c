@@ -163,8 +163,11 @@ char *pvec_concat(PVec *vec, char *sep) {
 
 // Frees each element in `vec`, then frees the vector itself.
 void pvec_free(PVec *vec) {
-  while (vec->size > 0)
-    free(pvec_pop(vec));
+  while (vec->size > 0) {
+    void *el = pvec_pop(vec);
+    if (el != NULL)
+      free(el);
+  }
   free(vec->start);
 }
 
@@ -440,6 +443,7 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
         handle_output_res = handle_redirect(cmd, &pipe_to, ">", "<");
       else
         handle_output_res = 0;
+      pvec_free(&pipe_cmd);
       int handle_input_res = handle_redirect(cmd, &pipe_from, "<", ">");
       if (handle_input_res > 0) {
         if (!access(pipe_from, R_OK)) {
@@ -467,6 +471,7 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
       pvec_push(cmd, NULL);
       execv(absolute_path, (char **)cmd->start);
     } else if (pd > 0) {
+      pvec_free(&pipe_cmd);
       int status;
       pvec_push(processes,
                 (void *)(long)
@@ -492,6 +497,7 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
 // and contains not pointers but integers. Processes can be added.
 void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
   if (!cmd->size || *action == EXIT) {
+    pvec_free(cmd);
     return;
   }
   char *first = cmd->start[0];
@@ -500,13 +506,11 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
     signal_error(cmd->size != 2, 0,
                  ERROR_MESSAGE("The \"cd\" command takes 1 argument"));
     chdir(cmd->start[1]);
-    pvec_free(cmd);
   } else if (!strcmp(first, EXIT_COMMAND)) {
     errno = E2BIG;
     signal_error(cmd->size != 1, 0,
                  ERROR_MESSAGE("The \"exit\" command takes 0 arguments."));
     *action = EXIT;
-    pvec_free(cmd);
   } else if (!strcmp(first, PATH_COMMAND)) {
     size_t index = 1;
     // if the first command is "-+", then don't remove the old path
@@ -523,11 +527,12 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
     }
     for (; index < cmd->size; index++) {
       pvec_push(path, cmd->start[index]);
+      cmd->start[index] = NULL;
     }
   } else {
     exec_external(cmd, path, action, processes);
-    pvec_free(cmd);
   }
+  pvec_free(cmd);
 }
 
 // Returns PVec containing the local path. If native is != 0, will grab the
