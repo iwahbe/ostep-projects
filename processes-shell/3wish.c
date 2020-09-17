@@ -340,10 +340,12 @@ char *resolve_relative(char *command) {
     }
   }
   char *out = pvec_concat(&original, "/");
+  pvec_free(&original);
   pvec_free(&delta);
   if (!access(out, X_OK))
     return out;
   else {
+    free(out);
     return NULL;
   }
 }
@@ -480,6 +482,7 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
     errno = ENOENT;
     signal_error(1, 0, ERROR_MESSAGE("Could not find command in path"));
   }
+  free(pipe_rest);
 }
 
 // `cmd` is a the parsed command instruction. Calling exec_command gives
@@ -508,7 +511,9 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
     size_t index = 1;
     // if the first command is "-+", then don't remove the old path
     if (cmd->size > 1 && !(strcmp(cmd->start[1], SHOW_PATH_COMMAND))) {
-      printf("path = \"%s\"\n", pvec_concat(path, ":"));
+      char *concat_path = pvec_concat(path, ":");
+      printf("path = \"%s\"\n", concat_path);
+      free(concat_path);
       index = cmd->size;
     } else if (cmd->size > 1 && !(strcmp(cmd->start[1], ADD_PATH_COMMAND))) {
       index = 2;
@@ -532,7 +537,8 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
 PVec get_path(int native, int *error) {
   PVec path = pvec_make();
   if (native) {
-    char *native = getenv("PATH");
+    char *native = getenv("PATH"); // NOTE: this convinces valgrind that memory
+                                   // was leaked.
     *error = native == NULL;
     if (native != NULL) {
       char *ncopy = malloc(sizeof(char) * (strlen(native) + 1));
@@ -567,7 +573,7 @@ void main_loop(FILE *input, int batch) {
   // setup getline
   char *line = NULL;
   size_t len = 0;
-  ssize_t nread;
+  ssize_t nread = 0;
   enum ACTION action = NONE;
 
   // running procces
@@ -605,6 +611,7 @@ void main_loop(FILE *input, int batch) {
   if (batch) // for no readline library
     free(line);
   pvec_free(&path);
+  free(processes.start);
 }
 
 int main(int argc, char **argv) {
