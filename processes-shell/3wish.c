@@ -129,7 +129,7 @@ PVec pvec_split(PVec *vec, int(predicate)(void *), int append) {
   } else if (append == 0) {
     if (vec->start[index] != NULL)
       free(vec->start[index]); // the found element is skipped
-    index--;
+    index++;
     vec->size--;
   } else {
     index += 2; // the found element is left in the old vector;

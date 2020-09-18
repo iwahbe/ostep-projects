@@ -1,12 +1,18 @@
 CC = clang
 
-.PHONY = test clean wtest 3test
+.PHONY = test clean wtest 3test debug-flags
 
 DEBUG = -fsanitize=address -g
 
 ARGS = -Wextra
 
 all : wish 3wish test
+
+debug-flags :
+ARGS +=${DEBUG}
+
+3debug : | debug-flags 3wish
+wdebug : | debug-flags wish
 
 wish : wish.c
 	${CC} wish.c -o wish ${ARGS}
@@ -17,11 +23,11 @@ wish : wish.c
 
 test : wtest 3test
 
-wtest : wish
+wtest : wdebug
 	./test-wish.sh
 
 3test : CFLAGS = "-DTEST_ERROR=1"
-3test : 3wish
+3test : 3debug
 	@ [ -f wish ] && mv wish wish-backup || true
 	@ mv 3wish wish
 	./test-wish.sh || mv wish 3wish
