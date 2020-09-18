@@ -44,6 +44,7 @@ readline-8.0 :
 
 clean :
 	@ rm *.o 2&> /dev/null || true
+	@ rm -r *.dSYM 2&> /dev/null || true
 	@ [ -e tests-out ] && rm -r tests-out || true
 	@ [ -f 3wish ] && rm 3wish || true
 	@ [ -f wish ] && rm wish || true
