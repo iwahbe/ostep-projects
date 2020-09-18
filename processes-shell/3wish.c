@@ -36,7 +36,7 @@ const char *ADD_PATH_COMMAND = "-+";
 const char *CD_COMMAND = "cd";
 const char *EXIT_COMMAND = "exit";
 
-enum ACTION { EXIT, NONE, PIPE, ASYNC, REDIRECT };
+enum ACTION { EXIT = 0, NONE = 1, ASYNC = 2 };
 
 const char TEST_ERROR_MESSAGE[30] = "An error has occurred\n";
 
@@ -47,7 +47,7 @@ void signal_error(int throw, int hard, char *message) {
 #ifdef TEST_ERROR
     write(STDERR_FILENO, TEST_ERROR_MESSAGE, strlen(TEST_ERROR_MESSAGE));
 #else
-    perror(message ? message : strerror(errno));
+    perror(message ? message : ERROR_MESSAGE(""));
 #endif
     if (hard) {
       exit(1);
@@ -127,7 +127,9 @@ PVec pvec_split(PVec *vec, int(predicate)(void *), int append) {
   if (append > 0) {
     // the found element is included in the new vector
   } else if (append == 0) {
-    free(vec->start[index++]); // the found element is skipped
+    if (vec->start[index] != NULL)
+      free(vec->start[index]); // the found element is skipped
+    index--;
     vec->size--;
   } else {
     index += 2; // the found element is left in the old vector;
@@ -434,29 +436,31 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
   if (absolute_path != NULL) {
     pid_t pd = fork();
     if (pd == 0) {
+      // If errors are found in the fork, always throw hard errors.
       if (pipe_cmd.size > 0) {
         FILE *out = popen(pipe_rest, "w");
         fclose(stdout);
         dup2(fileno(out), STDOUT_FILENO);
       }
       if (pipe_cmd.size == 0)
+        // handle the '>' operator
         handle_output_res = handle_redirect(cmd, &pipe_to, ">", "<");
       else
         handle_output_res = 0;
       pvec_free(&pipe_cmd);
       int handle_input_res = handle_redirect(cmd, &pipe_from, "<", ">");
       if (handle_input_res > 0) {
-        if (!access(pipe_from, R_OK)) {
-          // read permission is false
-          signal_error(1, 0, NULL);
+        FILE *in = fopen(pipe_from, "r");
+        if (in == NULL) {
+          free(pipe_from);
+          signal_error(in == NULL, 1, NULL);
         } else {
           fclose(stdin);
-          fopen(pipe_from, "r");
-          free(pipe_from);
+          dup2(fileno(in), STDIN_FILENO);
         }
+        free(pipe_from);
       } else if (handle_input_res < 0) {
-        signal_error(1, 0, NULL);
-        return;
+        signal_error(1, 1, NULL);
       }
 
       if (handle_output_res > 0) {
@@ -464,9 +468,7 @@ void exec_external(PVec *cmd, PVec *path, enum ACTION *signal,
         fopen(pipe_to, "w");
         free(pipe_to);
       } else if (handle_output_res < 0) {
-        signal_error(1, 0, NULL);
-        return;
-      } else if (*signal == PIPE) {
+        signal_error(1, 1, NULL);
       }
       pvec_push(cmd, NULL);
       execv(absolute_path, (char **)cmd->start);
@@ -507,10 +509,10 @@ void exec_command(PVec *cmd, PVec *path, enum ACTION *action, PVec *processes) {
                  ERROR_MESSAGE("The \"cd\" command takes 1 argument"));
     chdir(cmd->start[1]);
   } else if (!strcmp(first, EXIT_COMMAND)) {
+    *action = EXIT;
     errno = E2BIG;
     signal_error(cmd->size != 1, 0,
                  ERROR_MESSAGE("The \"exit\" command takes 0 arguments."));
-    *action = EXIT;
   } else if (!strcmp(first, PATH_COMMAND)) {
     size_t index = 1;
     // if the first command is "-+", then don't remove the old path
@@ -602,7 +604,7 @@ void main_loop(FILE *input, int batch) {
     if (line_end > 0)
       add_history(line);
     int read_to = 0;
-    while (line_end > read_to && action != EXIT) {
+    while (action != EXIT && line_end > read_to) {
       PVec command = seperate_line(line, &read_to, &action);
       exec_command(&command, &path, &action, &processes);
     }

@@ -23,9 +23,10 @@ wtest : wish
 3test : CFLAGS = "-DTEST_ERROR=1"
 3test : 3wish
 	@ [ -f wish ] && mv wish wish-backup || true
-	@mv 3wish wish
+	@ mv 3wish wish
 	./test-wish.sh || mv wish 3wish
-	@mv wish 3wish
+	@ mv wish 3wish
+	@ [ -f wish-backup ] && mv wish-backup wish || true
 
 
 readline-8.0 :
@@ -40,3 +41,4 @@ clean :
 	@ [ -e tests-out ] && rm -r tests-out || true
 	@ [ -f 3wish ] && rm 3wish || true
 	@ [ -f wish ] && rm wish || true
+	@ [ -f wish-backup ] && rm wish-backup || true
