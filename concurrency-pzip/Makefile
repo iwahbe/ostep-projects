@@ -1,7 +1,9 @@
 ${CC} = clang
 
+DEBUG = -g -fsanitize=address
+
 build:
-	${CC} pzip.c -Werror -pthreads -o pzip
+	${CC} pzip.c -Werror -pthreads -o pzip ${DEBUG}
 
 clean:
 	@ [ -f pzip ] && rm pzip || true
