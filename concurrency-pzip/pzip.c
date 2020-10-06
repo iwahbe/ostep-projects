@@ -11,6 +11,13 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+const int INT_OFFSET = 4;
+
+const int DEBUG_INFO = 0;
+#define eprintf(...)                                                           \
+  if (DEBUG_INFO)                                                              \
+  fprintf(stderr, __VA_ARGS__)
+
 const int CHUNK_SIZE = 1000;
 const int THREAD_BUFF_LENGTH = CHUNK_SIZE * 5;
 
@@ -23,6 +30,9 @@ typedef struct {
 
 WriteHead WRITE_HEAD;
 
+/*
+ * Setup write-head.
+ */
 void write_head_init(WriteHead *write_head) {
   write_head->write_num = 1;
   pthread_mutex_init(&write_head->guard, NULL);
@@ -42,9 +52,12 @@ int write_head_num(WriteHead *head) { return head->write_num; }
  * Writes the buff to head.
  * Assumes that the write-head is already locked.
  */
-void write_head_write_buff(WriteHead *head, char *buff, int length) {
-  fwrite(buff, length, 1, stdout);
-  head->write_num++;
+void write_head_write_buff(WriteHead *head, unsigned char *buff, int length) {
+  if (length > 0) {
+    fwrite(buff, length, 1, stdout);
+    head->write_num++;
+    eprintf("Written %d chars.\n", length);
+  }
 }
 
 typedef struct {
@@ -72,42 +85,63 @@ void task_descriptor_init(TaskDescriptor *task) {
   task->exit_immediately = 0;
   compress_info_init(&task->info);
 }
+void print_write_buff(unsigned char *buf, int length) {
+  if (DEBUG_INFO) {
+    printf("buf: '");
+    for (int len = 0; len < length; len += INT_OFFSET + 1) {
+      int n = (*(buf + len) << 24) + (*(buf + len + 1) << 16) +
+              (*(buf + len + 2) << 8) + *(buf + len + 3);
+      printf("%d%c", n, *(buf + len + INT_OFFSET));
+    }
+    printf("'\n");
+  }
+}
+
+void write_internal_buff(unsigned char *buff, int *index, char c, int count) {
+  if (count > 0) {
+    buff[3] = (count >> 24) & 0xFF;
+    buff[2] = (count >> 16) & 0xFF;
+    buff[1] = (count >> 8) & 0xFF;
+    buff[0] = count & 0xFF;
+    *index += INT_OFFSET;
+    *(buff + *index) = c;
+    (*index)++;
+  }
+}
 
 void write_section(TaskDescriptor *desc) {
-  char buff[THREAD_BUFF_LENGTH];
+  unsigned char buff[THREAD_BUFF_LENGTH];
   int buff_index = 0;
   do {
-    printf("considering task_num=%d\n", desc->tasknum);
+    eprintf("considering task_num=%d\n", desc->tasknum);
     if (desc->tasknum) { // TODO: put in non spin-lock here
-      printf("executing task_num=%d\n", desc->tasknum);
+      eprintf("executing task_num=%d\n", desc->tasknum);
       char c;
       buff_index = 0;
-      while (desc->read_end > desc->read_begin &&
-             (c = *((desc->read_begin)++))) {
+      while (desc->read_end > desc->read_begin) {
+        c = *((desc->read_begin)++);
         if (c == desc->info.last_char) {
           (desc->info.count)++;
         } else {
-          if (desc->info.count) {
-            buff[buff_index] = desc->info.count;
-            buff_index += 4;
-            buff[buff_index++] = c;
-          }
+          write_internal_buff(buff, &buff_index, c, desc->info.count);
           desc->info.last_char = c;
           desc->info.count = 1;
         }
       }
-      printf("finished read loop on task_num=%d\n", desc->tasknum);
+      write_internal_buff(buff, &buff_index, c, desc->info.count);
+      eprintf("finished read loop on task_num=%d\n", desc->tasknum);
       int do_loop = 1;
       while (do_loop) {
         write_head_lock(&WRITE_HEAD); // TODO: streamline concurency
         if (desc->tasknum == write_head_num(&WRITE_HEAD)) {
+          print_write_buff(buff, buff_index);
           write_head_write_buff(&WRITE_HEAD, buff, buff_index);
           do_loop = 0;
           desc->tasknum = 0;
         }
         write_head_unlock(&WRITE_HEAD);
       }
-      printf("finished write loop on task_num=%d\n", desc->tasknum);
+      eprintf("finished write loop on task_num=%d\n", desc->tasknum);
     }
   } while (!desc->exit_immediately);
 }
@@ -202,6 +236,7 @@ int main(int argc, char **argv) {
       if (!pthread_create(pinfo + i, &pattr, (void *)write_section, tasks + i))
         return 1;
     }
+    eprintf("Created %d extra threads\n", concurrent_task_num - 1);
 
     // PROCESS FILES
     int task_num = 0;
@@ -213,25 +248,30 @@ int main(int argc, char **argv) {
         return 1;
       findex = file;
       end = file + length;
-      printf("File process started\n");
+      eprintf("File process started\n");
       // file is not yet processed
       while (end > findex) {
         for (int i = 0; i < concurrent_task_num; i++) {
           if (tasks[i].tasknum == 0) {
             set_next_task(++task_num, tasks + i, &findex, end);
-            printf("Task set for task_num=%d\n", task_num);
+            eprintf("Task set for task_num=%d\n", task_num);
           }
         }
-        printf("task dispatch done, on task_num=%d\n", task_num);
+        eprintf("task dispatch done, on task_num=%d\n", task_num);
         write_section(tasks + 0); // this one returns on completion
-        printf("main thread writen on task_num=%d\n", task_num);
+        eprintf("main thread writen on task_num=%d\n", task_num);
       }
-      printf("loop exited\n");
+      eprintf("loop exited\n");
       munmap(file, length);
-      printf("One cycle done\n");
+      eprintf("One cycle done\n");
     }
+    // Finish when done
+    for (int i = 1; i < concurrent_task_num; i++)
+      tasks[i].exit_immediately = 1;
+    // Join
     for (int i = 1; i < concurrent_task_num; i++)
       pthread_join(pinfo[i], NULL);
+    // cleanup
     free(pinfo);
     free(tasks);
   }
