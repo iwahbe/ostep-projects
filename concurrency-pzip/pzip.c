@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <fcntl.h>
 #include <pthread/pthread.h>
 #include <signal.h>
@@ -53,11 +54,10 @@ int write_head_num(WriteHead *head) { return head->write_num; }
  * Assumes that the write-head is already locked.
  */
 void write_head_write_buff(WriteHead *head, unsigned char *buff, int length) {
-  if (length > 0) {
+  if (length > 0)
     fwrite(buff, length, 1, stdout);
-    head->write_num++;
-    eprintf("Written %d chars.\n", length);
-  }
+  head->write_num++;
+  eprintf("Written %d chars.\n", length);
 }
 
 typedef struct {
@@ -71,11 +71,15 @@ void compress_info_init(CompressInfo *info) {
 }
 
 typedef struct {
-  int tasknum;
-  char *read_begin;
-  char *read_end;
-  CompressInfo info;
-  int exit_immediately;
+  int tasknum;          // The sequential ordering of writes, starting from 1.
+  char *read_begin;     // The begininning of the sequence to encode.
+  char *read_end;       // The end of the sequence to decode.
+  CompressInfo info;    // Information about the decoding taking place.
+  int exit_immediately; // Whither to exit after finishing one cycle.
+  int write_end; // Whither to write the end, or wait for new input to encode.
+  int return_tasknum; // The tasknum to next write to.
+  int buff_index;
+  unsigned char buff[THREAD_BUFF_LENGTH];
 } TaskDescriptor;
 
 void task_descriptor_init(TaskDescriptor *task) {
@@ -83,90 +87,90 @@ void task_descriptor_init(TaskDescriptor *task) {
   task->read_end = NULL;
   task->read_begin = NULL;
   task->exit_immediately = 0;
+  task->write_end = 0;
+  task->buff_index = 0;
+  task->return_tasknum = -1;
   compress_info_init(&task->info);
 }
-void print_write_buff(unsigned char *buf, int length) {
-  if (DEBUG_INFO) {
-    printf("buf: '");
-    for (int len = 0; len < length; len += INT_OFFSET + 1) {
-      int n = (*(buf + len) << 24) + (*(buf + len + 1) << 16) +
-              (*(buf + len + 2) << 8) + *(buf + len + 3);
-      printf("%d%c", n, *(buf + len + INT_OFFSET));
-    }
-    printf("'\n");
+void eprint_write_buff(unsigned char *buf, int length) {
+  eprintf("buf: '");
+  for (int len = 0; len < length; len += INT_OFFSET + 1) {
+    int n = (*(buf + len) << 0) + (*(buf + len + 1) << 8) +
+            (*(buf + len + 2) << 16) + (*(buf + len + 3) << 24);
+    eprintf("%d%c", n, *(buf + len + INT_OFFSET));
   }
+  eprintf("'\n");
 }
 
 void write_internal_buff(unsigned char *buff, int *index, char c, int count) {
   if (count > 0) {
-    buff[3] = (count >> 24) & 0xFF;
-    buff[2] = (count >> 16) & 0xFF;
-    buff[1] = (count >> 8) & 0xFF;
-    buff[0] = count & 0xFF;
-    *index += INT_OFFSET;
-    *(buff + *index) = c;
-    (*index)++;
+    unsigned char *ind = buff + *index;
+    *index += INT_OFFSET + 1;
+    ind[3] = (count >> 24) & 0xFF;
+    ind[2] = (count >> 16) & 0xFF;
+    ind[1] = (count >> 8) & 0xFF;
+    ind[0] = count & 0xFF;
+    ind[4] = c;
+    eprintf("Writing '%d%c'\n", count, c == '\n' ? '@' : c);
+  }
+}
+
+void sync_write_from_internal_buff(TaskDescriptor *desc) {
+  int do_loop = 1;
+  while (do_loop) {
+    write_head_lock(&WRITE_HEAD); // TODO: streamline concurency
+    assert(desc->tasknum >= write_head_num(&WRITE_HEAD));
+    if (desc->tasknum == write_head_num(&WRITE_HEAD)) {
+      if (!desc->write_end) {
+        eprint_write_buff(desc->buff, desc->buff_index);
+        write_head_write_buff(&WRITE_HEAD, desc->buff, desc->buff_index);
+        desc->buff_index = 0;
+      } else {
+        desc->return_tasknum = desc->tasknum;
+      }
+      do_loop = 0;
+      desc->tasknum = 0;
+    }
+    write_head_unlock(&WRITE_HEAD);
+  }
+}
+// reads the range described by desc into buff, returning the length read of the
+// buff read.
+void read_to_internal_buff(TaskDescriptor *desc) {
+  char c = EOF;
+  while (desc->read_end > desc->read_begin) {
+    c = *((desc->read_begin)++);
+    if (c == desc->info.last_char) {
+      (desc->info.count)++;
+    } else {
+      write_internal_buff(desc->buff, &desc->buff_index, desc->info.last_char,
+                          desc->info.count);
+      desc->info.last_char = c;
+      desc->info.count = 1;
+    }
+  }
+  if (desc->write_end == 0) {
+    eprintf("closing write\n");
+    write_internal_buff(desc->buff, &desc->buff_index, desc->info.last_char,
+                        desc->info.count);
   }
 }
 
 void write_section(TaskDescriptor *desc) {
-  unsigned char buff[THREAD_BUFF_LENGTH];
-  int buff_index = 0;
   do {
-    eprintf("considering task_num=%d\n", desc->tasknum);
     if (desc->tasknum) { // TODO: put in non spin-lock here
-      eprintf("executing task_num=%d\n", desc->tasknum);
-      char c;
-      buff_index = 0;
-      while (desc->read_end > desc->read_begin) {
-        c = *((desc->read_begin)++);
-        if (c == desc->info.last_char) {
-          (desc->info.count)++;
-        } else {
-          write_internal_buff(buff, &buff_index, c, desc->info.count);
-          desc->info.last_char = c;
-          desc->info.count = 1;
-        }
-      }
-      write_internal_buff(buff, &buff_index, c, desc->info.count);
-      eprintf("finished read loop on task_num=%d\n", desc->tasknum);
-      int do_loop = 1;
-      while (do_loop) {
-        write_head_lock(&WRITE_HEAD); // TODO: streamline concurency
-        if (desc->tasknum == write_head_num(&WRITE_HEAD)) {
-          print_write_buff(buff, buff_index);
-          write_head_write_buff(&WRITE_HEAD, buff, buff_index);
-          do_loop = 0;
-          desc->tasknum = 0;
-        }
-        write_head_unlock(&WRITE_HEAD);
-      }
-      eprintf("finished write loop on task_num=%d\n", desc->tasknum);
+      eprintf("executing task_num=%d with write_end=%d\n", desc->tasknum,
+              desc->write_end);
+      read_to_internal_buff(desc);
+      sync_write_from_internal_buff(desc);
     }
   } while (!desc->exit_immediately);
 }
 
-void write_compressed_char(FILE *to, char c, int *count) {
-  if (*count > 0) {
-    fwrite(count, 4, 1, to);
-    putc(c, to);
-    *count = 0;
-  }
-}
-
-void write_compressed_file(FILE *old_file, FILE *to, CompressInfo *info) {
-  char c;
-  while ((c = getc(old_file)) != EOF) {
-    if (c == info->last_char) {
-      (info->count)++;
-    } else {
-      write_compressed_char(to, info->last_char, &(info->count));
-      info->last_char = c;
-      info->count = 1;
-    }
-  }
-}
-
+// mmap a file into memeory,
+// setting file to the file,
+// setting length to the file length
+// returning 0 if successful
 int mmap_file(char *file_name, char **file, size_t *length) {
   struct stat sb;
   int fd = open(file_name, O_RDONLY);
@@ -182,9 +186,12 @@ int mmap_file(char *file_name, char **file, size_t *length) {
   return 0;
 }
 
-void set_next_task(int task_num, TaskDescriptor *task, char **head, char *end) {
-  if (*head >= end)
-    return;
+// returns if the batch was the last in the file.
+int set_next_task(int *task_num, TaskDescriptor *task, char **head, char *end,
+                  int use_pending_info, CompressInfo pending_info) {
+  if (*head >= end) {
+    return 1;
+  }
   task->read_begin = *head;
   char *seek = *head + CHUNK_SIZE;
   // don't seek past the then
@@ -194,8 +201,15 @@ void set_next_task(int task_num, TaskDescriptor *task, char **head, char *end) {
   while (seek + 1 < end && *seek == *(seek + 1))
     seek++;
   *head = (task->read_end = seek);
+  int incr_task_num = !task->write_end; // from old run
+  task->write_end = task->read_end == end;
+  int out = task->read_end == end;
   // This triggers action, so must happen last
-  task->tasknum = task_num;
+  int tasknum = (*(task_num) += incr_task_num);
+  if (use_pending_info)
+    task->info = pending_info;
+  task->tasknum = tasknum;
+  return out;
 }
 
 int main(int argc, char **argv) {
@@ -214,6 +228,7 @@ int main(int argc, char **argv) {
       printf("%s must be a positive integer\n", NTHREADS);
       exit(1);
     }
+    assert(concurrent_task_num == 1);
 
     // INITIALIZE TASKS
     TaskDescriptor *tasks =
@@ -236,7 +251,10 @@ int main(int argc, char **argv) {
       if (!pthread_create(pinfo + i, &pattr, (void *)write_section, tasks + i))
         return 1;
     }
-    eprintf("Created %d extra threads\n", concurrent_task_num - 1);
+
+    int last_task = 0; // -1 means info is pending, otherwise it indexes into
+                       // the appropriate task.
+    CompressInfo pending_info;
 
     // PROCESS FILES
     int task_num = 0;
@@ -248,27 +266,33 @@ int main(int argc, char **argv) {
         return 1;
       findex = file;
       end = file + length;
-      eprintf("File process started\n");
+      int exit = 0;
       // file is not yet processed
-      while (end > findex) {
-        for (int i = 0; i < concurrent_task_num; i++) {
-          if (tasks[i].tasknum == 0) {
-            set_next_task(++task_num, tasks + i, &findex, end);
-            eprintf("Task set for task_num=%d\n", task_num);
+      while (end > findex && !exit) {
+        for (int task_i = 0; task_i < concurrent_task_num; task_i++) {
+          if (tasks[task_i].tasknum == 0) {
+            exit = set_next_task(&task_num, tasks + task_i, &findex, end,
+                                 last_task == -1, pending_info);
+            if (exit) {
+              last_task = task_i;
+            }
           }
         }
-        eprintf("task dispatch done, on task_num=%d\n", task_num);
         write_section(tasks + 0); // this one returns on completion
-        eprintf("main thread writen on task_num=%d\n", task_num);
       }
-      eprintf("loop exited\n");
       munmap(file, length);
-      eprintf("One cycle done\n");
+      // TODO: this better be done executing when it is saved.
+      pending_info = tasks[last_task].info; // save the info of the last task.
+      last_task = -1;
     }
     // Finish when done
-    for (int i = 1; i < concurrent_task_num; i++)
+    for (int i = 0; i < concurrent_task_num; i++) {
+      tasks[i].tasknum = tasks[i].write_end ? tasks[i].return_tasknum : 0;
+      tasks[i].write_end = 0;
       tasks[i].exit_immediately = 1;
+    }
     // Join
+    write_section(tasks + 0); // this one returns on completion
     for (int i = 1; i < concurrent_task_num; i++)
       pthread_join(pinfo[i], NULL);
     // cleanup
