@@ -19,7 +19,7 @@ const int DEBUG_INFO = 0;
   if (DEBUG_INFO)                                                              \
   fprintf(stderr, __VA_ARGS__)
 
-const int CHUNK_SIZE = 1000;
+const int CHUNK_SIZE = 5;
 const int THREAD_BUFF_LENGTH = CHUNK_SIZE * 5;
 
 const char *NTHREADS = "NTHREADS";
@@ -150,9 +150,10 @@ void read_to_internal_buff(TaskDescriptor *desc) {
     }
   }
   if (desc->write_end == 0) {
-    eprintf("closing write\n");
     write_internal_buff(desc->buff, &desc->buff_index, desc->info.last_char,
                         desc->info.count);
+    desc->info.last_char = EOF;
+    desc->info.count = 0;
   }
 }
 
@@ -200,6 +201,9 @@ int set_next_task(int *task_num, TaskDescriptor *task, char **head, char *end,
   // don't break a section into diffrent tasks
   while (seek + 1 < end && *seek == *(seek + 1))
     seek++;
+  if (seek < end)
+    seek++;
+  eprintf("head landed on '%c'\n", *seek != '\n' ? *seek : '@');
   *head = (task->read_end = seek);
   int incr_task_num = !task->write_end; // from old run
   task->write_end = task->read_end == end;
@@ -209,6 +213,7 @@ int set_next_task(int *task_num, TaskDescriptor *task, char **head, char *end,
   if (use_pending_info)
     task->info = pending_info;
   task->tasknum = tasknum;
+  eprintf("Head set to offset %ld on task %d\n", (long)(end - *head), tasknum);
   return out;
 }
 
