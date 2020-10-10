@@ -23,8 +23,8 @@ const unsigned int __DEBUG_INFO = 0;
   if (priority <= __DEBUG_INFO)                                                \
   fprintf(stdout, __VA_ARGS__)
 
-const int CHUNK_SIZE = 5;
-const int THREAD_BUFF_LENGTH = CHUNK_SIZE * 5;
+const int CHUNK_SIZE = 5; // NOTE: be carful with this buffer size
+const int THREAD_BUFF_LENGTH = CHUNK_SIZE * 50;
 
 const char *NTHREADS = "NTHREADS";
 
@@ -224,8 +224,7 @@ int set_next_task(int *task_num, TaskDescriptor *task, char **head, char *end,
   if (*head >= end) {
     return 0;
   }
-  task->exit_immediately =
-      (task->thread == 0); // TODO: this shouldn't be necessary
+  assert(task->exit_immediately == 0 || task->exit_immediately == 1);
   task->read_begin = *head;
   char *seek = *head + CHUNK_SIZE;
   // don't seek past the then
@@ -278,8 +277,8 @@ int process_files(char **fnames, int flength, TaskDescriptor *tasks,
     // file is not yet processed
     while (end > findex && !exit) {
       for (int task_i = 0; task_i < ntasks; task_i++) {
-        /* assert(tasks[task_i].exit_immediately == 0 || */
-        /*        tasks[task_i].exit_immediately == 1); */
+        assert(tasks[task_i].exit_immediately == 0 ||
+               tasks[task_i].exit_immediately == 1);
 
         if (tasks[task_i].tasknum == 0) {
           exit = set_next_task(&task_num, tasks + task_i, &findex, end,
