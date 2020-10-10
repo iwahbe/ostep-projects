@@ -21,12 +21,13 @@ const unsigned int __DEBUG_INFO = 0;
 
 #define eprintf(priority, ...)                                                 \
   if (priority <= __DEBUG_INFO)                                                \
-  fprintf(stdout, __VA_ARGS__)
+  fprintf(stderr, __VA_ARGS__)
 
 const int CHUNK_SIZE = 5; // NOTE: be carful with this buffer size
-const int THREAD_BUFF_LENGTH = CHUNK_SIZE * 50;
+const int THREAD_BUFF_LENGTH = CHUNK_SIZE * 500;
 
-const char *NTHREADS = "NTHREADS";
+const char *NTHREADS =
+    "NTHREADS"; // The name of the variable for setting threads.
 
 typedef struct {
   int write_num;
@@ -105,10 +106,10 @@ void task_descriptor_init(TaskDescriptor *task) {
 }
 void eprint_write_buff(unsigned char *buf, int length) {
   eprintf(3, "buf: '");
-  for (int len = 0; len < length; len += INT_OFFSET + 1) {
+  for (int len = 0; len < length; len += sizeof(int) + 1) {
     int n = (*(buf + len) << 0) + (*(buf + len + 1) << 8) +
             (*(buf + len + 2) << 16) + (*(buf + len + 3) << 24);
-    eprintf(3, "%d%c", n, *(buf + len + INT_OFFSET));
+    eprintf(3, "%d%c", n, *(buf + len + sizeof(int)));
   }
   eprintf(3, "'\n");
 }
@@ -122,7 +123,8 @@ void write_internal_buff(unsigned char *buff, int *index, char c, int count) {
       *index -= 5;
     }
     unsigned char *ind = buff + *index;
-    *index += INT_OFFSET + 1;
+    *index += sizeof(int) + 1;
+    assert(*index >= 0 && *index < THREAD_BUFF_LENGTH);
     ind[3] = (count >> 24) & 0xFF;
     ind[2] = (count >> 16) & 0xFF;
     ind[1] = (count >> 8) & 0xFF;
@@ -141,7 +143,6 @@ void sync_write_from_internal_buff(TaskDescriptor *desc) {
             desc->tasknum, write_head_num());
     if (desc->tasknum == write_head_num()) {
       if (!desc->write_end) {
-        eprint_write_buff(desc->info.buff, desc->info.buff_index);
         write_head_write_buff(desc->info.buff, desc->info.buff_index);
         desc->info.buff_index = 0;
       } else {
@@ -155,7 +156,6 @@ void sync_write_from_internal_buff(TaskDescriptor *desc) {
     write_head_unlock();
     eprintf(3, "spin baby spin\n");
   }
-  assert(!desc->tasknum);
 }
 // reads the range described by desc into buff, returning the length read of the
 // buff read.
@@ -189,14 +189,9 @@ void write_section(TaskDescriptor *desc) {
       eprintf(2, "finished read task_num=%d with write_end=%d on thread %lu\n",
               desc->tasknum, desc->write_end, (long)desc->thread);
       sync_write_from_internal_buff(desc);
-
-      eprintf(2, "finished write task_num=%d with write_end=%d on thread %lu\n",
-              desc->tasknum, desc->write_end, (long)desc->thread);
-      assert(desc->tasknum == 0);
     }
   } while (!desc->exit_immediately);
   assert(desc->exit_immediately);
-  assert(!desc->tasknum);
 }
 
 // mmap a file into memeory,
