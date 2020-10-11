@@ -1,13 +1,10 @@
 #include <assert.h>
 #include <fcntl.h>
-#include <pthread/pthread.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/_pthread/_pthread_attr_t.h>
-#include <sys/_pthread/_pthread_t.h>
-#include <sys/_types/_size_t.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -15,7 +12,7 @@
 const int INT_OFFSET = 4;
 
 #ifndef DEBUG_INFO
-const unsigned int __DEBUG_INFO = 1;
+const unsigned int __DEBUG_INFO = 0;
 #define DEBUG_INFO
 #endif
 
@@ -31,7 +28,8 @@ const char *NTHREADS =
 
 typedef struct {
   volatile int write_num;
-  pthread_mutex_t guard;
+  pthread_mutex_t
+      guard; // A semiphore would have been better, but not supported on mac.
 } WriteHead;
 
 WriteHead WRITE_HEAD;

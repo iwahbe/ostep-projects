@@ -1,4 +1,4 @@
-${CC} = clang
+CC = clang
 
 DEBUG = -g -fsanitize=address
 OPT = -O3
@@ -6,10 +6,10 @@ OPT = -O3
 .PHONY = test
 
 pzip:
-	${CC} pzip.c -Werror -pthreads -o pzip ${OPT}
+	${CC} pzip.c -Werror -pthread -o pzip ${OPT}
 
 debug:
-	${CC} pzip.c -Werror -pthreads -o pzip ${DEBUG}
+	${CC} pzip.c -Werror -pthread -o pzip ${DEBUG}
 
 clean:
 	@ [ -f pzip ] && rm pzip || true
