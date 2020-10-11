@@ -15,7 +15,7 @@
 const int INT_OFFSET = 4;
 
 #ifndef DEBUG_INFO
-const unsigned int __DEBUG_INFO = 0;
+const unsigned int __DEBUG_INFO = 1;
 #define DEBUG_INFO
 #endif
 
@@ -23,14 +23,14 @@ const unsigned int __DEBUG_INFO = 0;
   if (priority <= __DEBUG_INFO)                                                \
   fprintf(stderr, __VA_ARGS__)
 
-const int CHUNK_SIZE = 5; // NOTE: be carful with this buffer size
-const int THREAD_BUFF_LENGTH = CHUNK_SIZE * 500;
+const int CHUNK_SIZE = 9000; // NOTE: be carful with this buffer size
+const int THREAD_BUFF_LENGTH = CHUNK_SIZE * 10;
 
 const char *NTHREADS =
     "NTHREADS"; // The name of the variable for setting threads.
 
 typedef struct {
-  int write_num;
+  volatile int write_num;
   pthread_mutex_t guard;
 } WriteHead;
 
@@ -130,7 +130,7 @@ void write_internal_buff(unsigned char *buff, int *index, char c, int count) {
     ind[1] = (count >> 8) & 0xFF;
     ind[0] = count & 0xFF;
     ind[4] = c;
-    eprintf(4, "Writing internal '%d%c'\n", count, c == '\n' ? '@' : c);
+    eprintf(6, "Writing internal '%d%c'\n", count, c == '\n' ? '@' : c);
   }
 }
 
@@ -179,7 +179,9 @@ void read_to_internal_buff(TaskDescriptor *desc) {
 }
 
 void write_section(TaskDescriptor *desc) {
+  int had_exit_immediatly = 0;
   do {
+    assert(had_exit_immediatly == 0);
     assert(desc->exit_immediately == 0 || desc->exit_immediately == 1);
     if (desc->tasknum) { // TODO: put in non spin-lock here
       eprintf(2, "executing task_num=%d with write_end=%d on thread %lu\n",
@@ -189,7 +191,14 @@ void write_section(TaskDescriptor *desc) {
       eprintf(2, "finished read task_num=%d with write_end=%d on thread %lu\n",
               desc->tasknum, desc->write_end, (long)desc->thread);
       sync_write_from_internal_buff(desc);
+      eprintf(2,
+              "finished write section loop:\n\ttask_num=%d with write_end=%d "
+              "on thread %lu\n",
+              desc->tasknum, desc->write_end, (long)desc->thread);
+      eprintf(2, "note: desc->exit_immediately=%d\n", desc->exit_immediately);
     }
+    eprintf(5, "spin the write section\n");
+    had_exit_immediatly |= desc->exit_immediately;
   } while (!desc->exit_immediately);
   assert(desc->exit_immediately);
 }
@@ -301,18 +310,42 @@ int process_files(char **fnames, int flength, TaskDescriptor *tasks,
     pending_info = tasks[last_task].info; // save the info of the last task.
     last_task = -1;
   }
-  eprintf(1, "Begun cleanup\n");
+  eprintf(2, "Begun cleanup\n");
+
   // Finish when done
   for (int i = 0; i < ntasks; i++) {
     tasks[i].tasknum = tasks[i].write_end ? tasks[i].return_tasknum : 0;
     tasks[i].write_end = 0;
     tasks[i].exit_immediately = 1;
   }
-  eprintf(3, "Joining threads\n");
   // Join
-  write_section(tasks + 0); // this one returns on completion
-  for (int i = 1; i < ntasks; i++)
+  eprintf(2, "Joining threads\n");
+  for (int i = 1; i < ntasks; i++) {
+    write_section(tasks + 0); // this one returns on completion
+    eprintf(2,
+            "about to join thread: %lu\n"
+            "\ttasknum=%d, write_end=%d\n"
+            "\theadnum=%d, exit_immediatly=%d\n"
+            "\tinfo.count=%d, into.buff_index=%d\n",
+            (long)tasks[i].thread, tasks[i].tasknum, tasks[i].write_end,
+            write_head_num(), tasks[i].exit_immediately, tasks[i].info.count,
+            tasks[i].info.buff_index);
+    for (int k = 0; k < ntasks; k++) {
+      if (k != i)
+        eprintf(2,
+                "\n"
+                "\texamining thread: %lu\n"
+                "\t\ttasknum=%d, write_end=%d\n"
+                "\t\theadnum=%d, exit_immediatly=%d\n"
+                "\t\tinfo.count=%d, into.buff_index=%d\n",
+                (long)tasks[k].thread, tasks[k].tasknum, tasks[k].write_end,
+                write_head_num(), tasks[k].exit_immediately,
+                tasks[k].info.count, tasks[k].info.buff_index);
+    }
     pthread_join(tasks[i].thread, NULL);
+    eprintf(2, "thread %lu joined\n", (long)tasks[i].thread);
+  }
+  write_section(tasks + 0); // this one returns on completion
   return 0;
 }
 
