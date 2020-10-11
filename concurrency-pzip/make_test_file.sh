@@ -1,9 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo "Taking tests/6.in and"
+cat ./tests/6.in ./tests/6.in > bigTest.txt
+echo "Doubling it"
+cat bigTest.txt bigTest.txt > bigtest2.txt
+echo "Doubling it"
+cat bigTest2.txt bigTest2.txt > bigtest.txt
+echo "Doubling it"
+cat bigTest.txt bigTest.txt > bigtest2.txt
+echo "Doubling it"
+cat bigTest2.txt bigTest2.txt > bigtest.txt
+echo "Doubling it"
+cat bigTest.txt bigTest.txt > bigtest2.txt
+echo "Doubling it"
+cat bigTest2.txt bigTest2.txt > bigtest.txt
+echo "Doubling it"
 
-testfilesize=500000000
-donetime=$(expr $(date +"%s") + 20)
-while [ "$donetime" -gt $(date +"%s") ]; do
-    head /dev/urandom | LC_CTYPE=C tr -dc A-Za-z0-9;
-done | head -c $testfilesize > test_file
+rm bigTest2.txt 
+echo "Thats 2^7 times bigger"

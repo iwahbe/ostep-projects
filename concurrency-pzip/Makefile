@@ -3,7 +3,7 @@ CC = clang
 DEBUG = -g -fsanitize=address
 OPT = -O3
 
-.PHONY = test
+.PHONY = test speed
 
 pzip:
 	${CC} pzip.c -Werror -pthread -o pzip ${OPT}
@@ -16,8 +16,11 @@ clean:
 	@ [ -f test_file ] && rm test_file || true
 	@ [ -d tests-out ] && rm -r tests-out || true
 
-test_file:
+bigTest.txt:
 	./make_test_file.sh
+
+speed: bigTest.txt
+	./speed.sh
 
 test: pzip
 	./test-pzip.sh
