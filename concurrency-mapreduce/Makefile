@@ -1,18 +1,20 @@
 
 .PHONY = test clean
 CC = clang
-RUST_DEBUG_LOC = -L./target/debug ./target/debug/libconcurrency_mapreduce.dylib
-RUST_RELEASE_LOC = -L./target/release ./target/release/libconcurrency_mapreduce.dylib
+RUST_DEBUG_LOC = -L./target/debug -lconcurrency_mapreduce
+RUST_RELEASE_LOC = -L./target/release -lconcurrency_mapreduce
 OUT = mapreduce
+
+DRIVER = comp_test.c
 
 
 build:
 	cargo build
-	${CC} comp_test.c mapreduce.h ${RUST_DEBUG_LOC} -o ${OUT}
+	${CC} ${DRIVER} ${RUST_DEBUG_LOC} -o ${OUT}
 
 release:
 	cargo build --release
-	${CC} comp_test.c mapreduce.h ${RUST_DEBUG_LOC} -o ${OUT}
+	${CC} ${DRIVER} ${RUST_RELEASE_LOC} -o ${OUT}
 
 test: build
 	cargo test
