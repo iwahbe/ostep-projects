@@ -17,27 +17,11 @@ use threadpool::ThreadPool;
 #[allow(non_snake_case)]
 #[no_mangle]
 pub extern "C" fn MR_Emit(key: *const c_char, value: *const c_char) {
-    unsafe {
-        println!(
-            "MR_Emit called with key: {:?} and value: {:?}",
-            CStr::from_ptr(key),
-            CStr::from_ptr(value)
-        );
-    }
-}
-
-#[allow(non_camel_case_types)]
-#[allow(non_snake_case)]
-#[no_mangle]
-pub extern "C" fn MR_DefaultHashPartition(key: *const c_char, num_partition: c_int) -> u64 {
-    unsafe {
-        println!(
-            "MR_DefaultHashPartition called with key: {:?} and num_partition: {:?}",
-            CStr::from_ptr(key),
-            num_partition
-        );
-    }
-    0
+    println!(
+        "MR_Emit called with key: {:?} and value: {:?}",
+        unsafe { CStr::from_ptr(key) },
+        unsafe { CStr::from_ptr(value) }
+    );
 }
 
 type Mapper = extern "C" fn(*const c_char);
@@ -76,7 +60,7 @@ pub extern "C" fn MR_Run(
         mappers.execute(move || map(file_ptr.0));
     }
     mappers.wait(0); // wait until there are no threads
-    let reducers = ThreadPool::new(num_reducers as usize).unwrap();
+    let _reducers = ThreadPool::new(num_reducers as usize).unwrap();
     for (i, name) in file_names.iter_to(argc as usize).enumerate().skip(1) {
         unsafe {
             println!("argv[{}]: {:?}", i, CStr::from_ptr(*name));
@@ -108,4 +92,23 @@ pub extern "C" fn getter(key: *const c_char, partition_number: c_int) -> *const 
         partition_number
     );
     key
+}
+
+#[allow(non_camel_case_types)]
+#[allow(non_snake_case)]
+#[no_mangle]
+/// Hash function ported from project description in ostep
+pub extern "C" fn MR_DefaultHashPartition(key: *const c_char, num_partitions: c_int) -> c_ulong {
+    let mut hash: c_ulong = 5381;
+    let mut c: c_char;
+    let mut offset = 0;
+    while {
+        c = unsafe { *key.offset(offset) };
+        c
+    } != '\0' as c_char
+    {
+        offset += 1;
+        hash = hash * 33 + (c as c_ulong);
+    }
+    hash % (num_partitions as c_ulong)
 }
